@@ -82,8 +82,8 @@
   - Visualize improvement by feedback category
   - Recommend the next skill to practice
 
-- **RÃ©sumÃ©-Aware Practice:**
-  - Allow users to provide rÃ©sumÃ© information
+- **Resume-Aware Practice:**
+  - Allow users to provide resume information
   - Generate questions connected to their actual experience
 
 - **Expanded Interview Modes:**
