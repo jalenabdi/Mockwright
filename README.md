@@ -131,7 +131,7 @@
 
 *The timeline may change as the team tests the voice experience and receives user feedback.*
 
-- **Week 1 â€” Foundation:**
+- **Week 1 Foundation:**
   - Confirm the MVP and assign feature ownership
   - Set up the Next.js and FastAPI applications
   - Design the PostgreSQL schema
