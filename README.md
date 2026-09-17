@@ -43,7 +43,7 @@
 
 - **Adaptive Follow-Ups:**
   - Ask for missing context when an answer is incomplete
-  - Request the user's individual contribution when an answer relies too heavily on â€œweâ€
+  - Request the user's individual contribution when an answer relies too heavily on "we".
   - Ask for measurable results when impact is unclear
   - Avoid unnecessary or repeated follow-up questions
 
@@ -137,36 +137,36 @@
   - Design the PostgreSQL schema
   - Configure Docker Compose and repository standards
 
-- **Week 2 â€” Accounts and Database:**
+- **Week 2 Accounts and Database:**
   - Implement registration and login
   - Add JWT authentication
   - Create user and interview database models
   - Configure SQLAlchemy and Alembic
 
-- **Week 3 â€” Interview Setup:**
+- **Week 3 Interview Setup:**
   - Create role, job-description, and experience-level selection
   - Build interview session APIs
   - Generate and store the initial question set
 
-- **Week 4 â€” Typed Interview Flow:**
+- **Week 4 Typed Interview Flow:**
   - Submit typed responses
   - Generate adaptive follow-up questions
   - Save the interview conversation
   - Complete the first working interview from start to finish
 
-- **Week 5 â€” Scoring and Reports:**
+- **Week 5 Scoring and Reports:**
   - Implement the scoring rubric
   - Generate structured feedback
   - Build interview results and history pages
   - Add automated tests for scoring and interview logic
 
-- **Week 6 â€” Voice Integration:**
+- **Week 6 Voice Integration:**
   - Connect the Deepgram Voice Agent API
   - Stream microphone audio
   - Play interviewer responses
   - Store voice transcripts
 
-- **Week 7 â€” Barge-In and Reliability:**
+- **Week 7 Barge-In and Reliability:**
   - Support interruptions during AI speech
   - Handle denied microphone permissions and lost connections
   - Improve loading, error, and empty states
