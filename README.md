@@ -4,262 +4,272 @@
 
 ## Overview
 
-- **Mockwright** is an AI-powered behavioral interview practice platform for candidates preparing for internships, entry-level positions, junior roles, and senior opportunities.
-- Users choose a target role, select their experience level, and optionally provide a job description so the interview can be tailored to the opportunity.
-- The AI interviewer asks questions aloud and supports both spoken and typed responses.
-- Voice mode is designed to feel conversational, including follow-up questions and the ability to interrupt the interviewer naturally using **barge-in**.
-- After the interview, Mockwright provides a score out of 100 and actionable feedback on answer structure, relevance, specificity, individual contribution, communication, and areas for improvement.
-- The first release will focus on five-to-seven-question interviews that can be completed within a realistic eight-week development sprint.
+**Mockwright** is a backend-focused, AI-powered behavioral interview practice platform. Users choose a target role and experience level, answer five behavioral questions, and receive structured feedback on their performance.
+
+The primary goal of this project is to build a reliable backend with **FastAPI**, **PostgreSQL**, authentication, interview session management, AI-generated feedback, voice transcription, automated testing, and deployment. A lightweight interface may be used to demonstrate the API, but the eight-week development plan focuses on backend engineering.
 
 ---
 
-## MVP
+## Core Backend MVP
 
-- **Authentication:**
-  - Email and password registration
-  - Secure password hashing
-  - JWT-based login and protected routes
-  - Basic candidate profile
+### Authentication
 
-- **Interview Setup:**
-  - Enter a target position
-  - Optionally paste a job description
-  - Select an experience level:
-    - Intern
-    - Entry-level
-    - Junior
-    - Senior
-  - Choose between voice and typed-answer modes
-  - Generate five to seven behavioral questions
+- Register users with an email and password
+- Hash passwords before storing them
+- Log users in with JWT authentication
+- Protect private API routes
+- Return clear authentication and validation errors
 
-- **AI Interview Experience:**
-  - AI-generated questions based on the selected role and experience level
-  - Questions spoken aloud by the AI interviewer
-  - Real-time voice conversation through the Deepgram Voice Agent API
-  - Speech-to-text transcription for spoken answers
-  - Barge-in support so users can interrupt the interviewer while it is speaking
-  - Typed responses for users without a microphone
-  - Clear listening, thinking, speaking, and disconnected states
+### Interview Setup
 
-- **Adaptive Follow-Ups:**
-  - Ask for missing context when an answer is incomplete
-  - Request the user's individual contribution when an answer relies too heavily on "we".
-  - Ask for measurable results when impact is unclear
-  - Avoid unnecessary or repeated follow-up questions
+- Accept a target role
+- Accept an experience level:
+  - Intern
+  - Entry-level
+  - Junior
+  - Senior
+- Accept an optional job description
+- Create a new interview session
+- Generate and store five behavioral questions
 
-- **Scoring and Feedback:**
-  - Final practice score out of 100
-  - Feedback based on:
-    - Relevance
-    - STAR structure
-    - Specificity and evidence
-    - Individual ownership and judgment
-    - Reflection and communication
-  - Written strengths and areas for improvement
-  - Suggested next step for future practice
-  - Voice-delivery observations displayed separately from answer-content scoring
+### Interview Sessions
 
-- **Interview History:**
-  - View completed interviews
-  - Review previous questions and transcripts
-  - Revisit scores and feedback reports
-  - Delete personal interview history
+- Return one question at a time
+- Accept and save a typed answer
+- Track the current question and interview progress
+- Prevent users from skipping required questions
+- Mark the interview as completed after five answers
+- Ensure users can access only their own interviews
+
+### AI Scoring and Feedback
+
+- Evaluate completed interviews with an LLM API
+- Require structured output validated by Pydantic
+- Generate a final score out of 100
+- Evaluate answers using:
+  - Relevance
+  - STAR structure
+  - Specificity
+  - Individual contribution
+  - Communication
+- Return strengths and areas for improvement
+- Recommend one clear next step
+- Save the completed feedback report
+
+### Basic Voice Support
+
+- Accept an uploaded audio recording
+- Validate the file before processing it
+- Send the audio to the Deepgram API
+- Return the generated transcript
+- Allow the transcript to be submitted through the same answer endpoint used for typed responses
+
+### Interview History
+
+- Return a user's completed interviews
+- Return the questions and answers from a selected interview
+- Return the saved feedback report
+- Prevent users from viewing another user's history
 
 ---
 
 ## Stretch Goals
 
-- **Behavioral Story Bank:**
-  - Save reusable stories from work, school, projects, and leadership experiences
-  - Match stories to competencies such as teamwork, ownership, conflict, failure, and leadership
-
-- **Competency Coverage Map:**
-  - Show which behavioral topics a user has practiced
-  - Identify areas where the user needs a stronger example
-
-- **Progress Tracking:**
-  - Compare scores across multiple interviews
-  - Visualize improvement by feedback category
-  - Recommend the next skill to practice
-
-- **Resume-Aware Practice:**
-  - Allow users to provide resume information
-  - Generate questions connected to their actual experience
-
-- **Expanded Interview Modes:**
-  - Short, standard, and extended interview lengths
-  - Company-style question sets
-  - Additional industries and career fields
-  - Multilingual interview practice
-
-- **Report Sharing:**
-  - Export a private feedback summary
-  - Share selected results with a mentor or career coach
-
-- **Accessibility Improvements:**
-  - Keyboard-first interview controls
-  - Caption customization
-  - Adjustable speech speed and interviewer voice
+- Real-time voice conversations
+- Barge-in so users can interrupt the AI interviewer
+- Adaptive follow-up questions
+- Different interview lengths
+- Resume-based questions
+- Behavioral story bank
+- Progress analytics
+- Company-specific question sets
+- Shareable or downloadable reports
+- Multiple interviewer voices
+- Multilingual interview practice
 
 ---
 
 ## Tech Stack
 
-- **Frontend:** Next.js + TypeScript + Tailwind CSS
-- **API:** Python + FastAPI
+### Backend
+
+- **API Framework:** Python + FastAPI
 - **Database:** PostgreSQL
 - **ORM:** SQLAlchemy
 - **Migrations:** Alembic
 - **Validation:** Pydantic
-- **Authentication:** JWT with PyJWT and password hashing
-- **Voice AI:** Deepgram Voice Agent API
-- **Real-Time Audio:** Browser media APIs + WebSockets
-- **Frontend Data Fetching:** TanStack Query
-- **API Documentation:** OpenAPI and Swagger UI through FastAPI
-- **Testing:**
-  - Pytest for backend unit and integration tests
-  - HTTPX / FastAPI TestClient for API testing
-  - Playwright for critical end-to-end flows
-  - Postman for manual API testing
+- **Authentication:** JWT + password hashing
+- **AI Evaluation:** An LLM API with structured Pydantic output
+- **Speech-to-Text:** Deepgram API
+- **Advanced Voice — Stretch Goal:** Deepgram Voice Agent API
+- **Testing:** Pytest + HTTPX / FastAPI TestClient
 - **Containerization:** Docker + Docker Compose
 - **Continuous Integration:** GitHub Actions
-- **Deployment:** Render Blueprint or another Docker-compatible cloud host
+- **Deployment:** A Docker-compatible cloud platform
+
+### Supporting Interface
+
+- **Frontend:** Next.js + TypeScript + Tailwind CSS
+- **Data Fetching:** TanStack Query
+
+The interface exists to demonstrate and consume the backend API. The main project work and weekly milestones are centered on backend development.
 
 ---
 
-## Timeline
+## Eight-Week Backend Plan
 
-*The timeline may change as the team tests the voice experience and receives user feedback.*
+*Each bullet represents one contributor's main task for the week. This plan covers application development and testing; final release setup will be handled separately by the project manager.*
 
-- **Week 1 Foundation:**
-  - Confirm the MVP and assign feature ownership
-  - Set up the Next.js and FastAPI applications
-  - Design the PostgreSQL schema
-  - Configure Docker Compose and repository standards
+### Week 1 — Project Setup
 
-- **Week 2 Accounts and Database:**
-  - Implement registration and login
-  - Add JWT authentication
-  - Create user and interview database models
-  - Configure SQLAlchemy and Alembic
+- Set up the FastAPI project and GitHub repository
+- Connect the application to PostgreSQL
+- Create a health-check endpoint to confirm the backend works
+- Add a simple automated test for the health-check endpoint
 
-- **Week 3 Interview Setup:**
-  - Create role, job-description, and experience-level selection
-  - Build interview session APIs
-  - Generate and store the initial question set
+### Week 2 — User Authentication
 
-- **Week 4 Typed Interview Flow:**
-  - Submit typed responses
-  - Generate adaptive follow-up questions
-  - Save the interview conversation
-  - Complete the first working interview from start to finish
+- Create the user model and database table
+- Add the user registration endpoint
+- Add login and JWT token creation
+- Protect a route and test the authentication flow
 
-- **Week 5 Scoring and Reports:**
-  - Implement the scoring rubric
-  - Generate structured feedback
-  - Build interview results and history pages
-  - Add automated tests for scoring and interview logic
+### Week 3 — Interview Setup
 
-- **Week 6 Voice Integration:**
-  - Connect the Deepgram Voice Agent API
-  - Stream microphone audio
-  - Play interviewer responses
-  - Store voice transcripts
+- Create the interview session model
+- Create the interview question model
+- Add an endpoint for starting an interview
+- Generate and save five behavioral questions
 
-- **Week 7 Barge-In and Reliability:**
-  - Support interruptions during AI speech
-  - Handle denied microphone permissions and lost connections
-  - Improve loading, error, and empty states
-  - Add end-to-end tests
+### Week 4 — Typed Interview
 
-- **Week 8 â€” Release:**
-  - Deploy the application
-  - Conduct user testing
-  - Fix high-priority issues
-  - Finalize documentation and presentation materials
+- Return one interview question at a time
+- Add an endpoint for submitting typed answers
+- Save each answer in PostgreSQL
+- Track progress and complete the interview after five answers
+
+### Week 5 — Feedback
+
+- Create the scoring rubric and feedback schema
+- Send completed answers to the AI evaluation service
+- Generate the score, strengths, and areas for improvement
+- Save and return the final feedback report
+
+### Week 6 — Basic Voice Mode
+
+- Add an endpoint for uploading an audio answer
+- Validate the uploaded audio file
+- Use Deepgram to convert the audio into text
+- Submit the transcript through the existing answer flow
+
+### Week 7 — History and Testing
+
+- Add endpoints for viewing past interviews and reports
+- Make sure users can access only their own interviews
+- Test the main authentication and interview routes
+- Connect the full flow and fix important bugs
+
+### Week 8 — Final Testing and Demo
+
+- Test registration, login, and protected routes
+- Test the complete typed interview flow
+- Test AI feedback, interview history, and voice transcription
+- Fix final bugs and finish the documentation and demo
+
+---
+
+## MVP Completion Checklist
+
+The backend MVP is complete when:
+
+- Users can register and log in securely
+- Protected routes require a valid JWT
+- Users can create and complete a five-question interview
+- Questions, answers, progress, and reports are stored in PostgreSQL
+- Completed interviews receive structured AI feedback
+- Audio responses can be transcribed and submitted as text
+- Users can review their previous interviews and reports
+- Users cannot access another user's data
+- Important success and failure cases are covered by automated tests
+- The API is deployed and documented
 
 ---
 
 ## Branching Rules
 
-- **Main Branch:**
-  - `main` must remain stable and deployable
-  - No direct commits to `main`
-  - Changes enter `main` only through an approved pull request
+### Main Branch
 
-- **Feature Branches:**
-  - Create each branch from the latest version of `main`
-  - Use the following naming pattern:
+- `main` must always remain stable.
+- Do not commit directly to `main`.
+- All changes must enter through an approved pull request.
 
-    ```text
-    type/short_description
-    ```
+### Feature Branches
 
-  - Examples:
+Create every branch from the latest version of `main`.
 
-    ```text
-    feature/auth_jwt
-    feature/interview_setup
-    feature/deepgram_voice
-    feature/scoring_report
-    fix/voice_reconnect
-    test/interview_routes
-    ```
+Use this naming pattern:
 
-- **Creating a Branch:**
+```text
+type/short_description
+```
 
-  ```bash
-  git checkout main
-  git pull origin main
-  git checkout -b feature/interview_setup
-  ```
+Examples:
+
+```text
+feature/auth_jwt
+feature/interview_sessions
+feature/answer_submission
+feature/ai_feedback
+feature/voice_transcription
+fix/login_error
+test/interview_routes
+```
+
+Create a branch with:
+
+```bash
+git checkout main
+git pull origin main
+git checkout -b feature/interview_sessions
+```
 
 ---
 
 ## Development Process
 
-1. Select or receive an assigned issue.
+1. Select or receive a GitHub issue.
 2. Pull the newest version of `main`.
-3. Create a focused branch for the feature or fix.
-4. Implement and test the change locally.
+3. Create a branch for the issue.
+4. Implement and test the change.
 5. Push the branch to GitHub.
 6. Open a pull request into `main`.
-7. Address review feedback and wait for approval.
+7. Address review feedback.
+8. Wait for the project manager to merge the pull request.
 
-Keep each branch and pull request focused on one feature. Large features should be divided into smaller tasks that can be reviewed independently.
+Keep each branch and pull request focused on one task.
 
 ---
 
 ## Pull Request Rules
 
-- All code changes must be submitted through a pull request.
-- Every pull request must include:
-  - A clear explanation of the change
-  - A short summary of how it works
+- Every code change requires a pull request.
+- A pull request must include:
+  - A clear description of the change
+  - A summary of the files or features added
   - Testing that was performed
-  - Any database or migration changes
-  - Any new environment variable names
-  - Screenshots or recordings for frontend changes
-  - Known limitations or follow-up work
-- Tests and automated checks must pass before merging.
-- Do not include API keys, passwords, `.env` files, or other secrets.
+  - Database changes, if applicable
+  - API request and response examples, if applicable
+  - Any known issues
+- At least one teammate must review the pull request.
+- The author cannot approve or merge their own pull request.
+- Only the project manager performs the final merge into `main`.
+- Never commit passwords, API keys, `.env` files, or other secrets.
 
 Example pull request title:
 
 ```text
-Add experience-level interview setup
+Add interview session endpoint
 ```
-
----
-
-## Review and Merge Process
-
-- At least one teammate must review each pull request.
-- The author must respond to requested changes before approval.
-- Contributors cannot approve or merge their own pull requests.
-- The project manager performs the final merge into `main`.
-- Pull requests should be squash merged to keep the commit history readable.
-- Urgent fixes still require a pull request and review.
 
 ---
 
@@ -268,55 +278,39 @@ Add experience-level interview setup
 ```bash
 git checkout main
 git pull origin main
-git checkout -b feature/deepgram_voice
+git checkout -b feature/interview_sessions
 
 # Implement and test the feature
 
 git add .
-git commit -m "Add Deepgram voice interview session"
-git push origin feature/deepgram_voice
+git commit -m "Add interview session endpoint"
+git push origin feature/interview_sessions
 ```
 
-Then open a pull request on GitHub, request a review, address feedback, and wait for the project manager to merge the approved change.
+Then open a pull request, request a review, address any feedback, and wait for the project manager to merge it.
 
 ---
 
 ## Resources
 
-### Everyone Should Review
+### Everyone Should Watch
 
-- [Git and GitHub Basics](https://docs.github.com/en/get-started/using-git/about-git)
-- [REST API Concepts](https://developer.mozilla.org/en-US/docs/Glossary/REST)
-- [Docker Compose](https://docs.docker.com/compose/intro/compose-application-model/)
-- [System Design Basics](https://github.com/donnemartin/system-design-primer)
+- [Git and GitHub for Beginners — Crash Course](https://www.youtube.com/watch?v=RGOj5yH7evk)
+- [What Is a REST API?](https://www.youtube.com/watch?v=lsMQRaeKNDk)
+- [Docker Compose Tutorial](https://www.youtube.com/watch?v=MVIcrmeV_6c)
+- [System Design for Beginners](https://www.youtube.com/watch?v=m8Icp_Cid5o)
 
-### Backend
+### Backend Team
 
-- [FastAPI Tutorial](https://fastapi.tiangolo.com/tutorial/)
-- [FastAPI JWT Authentication](https://fastapi.tiangolo.com/tutorial/security/oauth2-jwt/)
-- [Pydantic Documentation](https://docs.pydantic.dev/latest/)
-- [SQLAlchemy Tutorial](https://docs.sqlalchemy.org/en/20/tutorial/)
-- [Alembic Documentation](https://alembic.sqlalchemy.org/)
-- [PostgreSQL Tutorial](https://www.postgresql.org/docs/current/tutorial.html)
-- [Pytest Documentation](https://docs.pytest.org/)
+- [FastAPI Course for Beginners](https://www.youtube.com/watch?v=tLKKmouUams)
+- [Python API Development — Comprehensive Course](https://www.youtube.com/watch?v=0sOvCWFmrtA)
+- [PostgreSQL Full Course for Beginners](https://www.youtube.com/watch?v=qw--VYLpxG4)
+- [Pytest Tutorial — How to Test Python Code](https://www.youtube.com/watch?v=cHYq1MRoyI0)
 
-### Frontend and Voice
-
-- [Next.js Documentation](https://nextjs.org/docs)
-- [Tailwind CSS Documentation](https://tailwindcss.com/docs)
-- [TanStack Query Documentation](https://tanstack.com/query/latest/docs/framework/react/overview)
-- [Deepgram Voice Agent API](https://developers.deepgram.com/docs/voice-agent)
-- [Deepgram Voice Agent Architecture](https://developers.deepgram.com/docs/voice-agent-architecture)
-- [Playwright Documentation](https://playwright.dev/docs/intro)
+> Some videos may use older library versions. Use them to learn the concepts, then check the current official documentation while implementing features.
 
 ---
 
 ## Project Status
 
-Mockwright is currently in active planning and early development. The MVP scope and timeline may be adjusted as the team validates the interview experience.
-
----
-
-## License
-
-License selection is pending.
+Mockwright is currently in the planning and setup stage. The team will build and stabilize the typed interview backend before adding voice transcription and advanced voice features.
