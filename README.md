@@ -98,10 +98,10 @@ Each contributor receives one main task per week. Tasks should remain small enou
 
 ### Week 1 — First Working Interview Flow
 
-- **Ahmed Hisham:** Set up the FastAPI application and create a `GET /health` endpoint that confirms the backend is running.
-- **Alex:** Create the Pydantic model for starting an interview with `target_role`, `experience_level`, and an optional `job_description`.
-- **Krithik:** Create a question bank containing at least 10 behavioral questions and a function that selects five questions.
-- **Marcial Amaro:** Create `POST /interviews/start`, which accepts the interview settings and returns five questions from the question bank.
+- Set up the FastAPI application and create a `GET /health` endpoint that confirms the backend is running.
+- Create the Pydantic model for starting an interview with `target_role`, `experience_level`, and an optional `job_description`.
+- Create a question bank containing at least 10 behavioral questions and a function that selects five questions.
+- Create `POST /interviews/start`, which accepts the interview settings and returns five questions from the question bank.
 
 **Week 1 goal:** A user can open Swagger UI, enter their interview settings, and receive five behavioral questions.
 
