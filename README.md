@@ -4,49 +4,37 @@
 
 ## Overview
 
-**Mockwright** is a backend-focused, AI-powered behavioral interview practice platform. Users choose a target role and experience level, answer five behavioral questions, and receive structured feedback on their performance.
+**Mockwright** is a backend-focused behavioral interview practice platform. Users choose a target role and experience level, complete a five-question interview, and receive structured feedback on their answers.
 
-The primary goal of this project is to build a reliable backend with **FastAPI**, **PostgreSQL**, authentication, interview session management, AI-generated feedback, voice transcription, automated testing, and deployment. A lightweight interface may be used to demonstrate the API, but the eight-week development plan focuses on backend engineering.
+The goal is to build a small, reliable MVP with **Python, FastAPI, PostgreSQL, and AI-generated feedback**. The team will finish the typed interview experience before considering more advanced features.
 
 ---
 
-## Core Backend MVP
+## Simple MVP
 
-### Authentication
+### Start an Interview
 
-- Register users with an email and password
-- Hash passwords before storing them
-- Log users in with JWT authentication
-- Protect private API routes
-- Return clear authentication and validation errors
-
-### Interview Setup
-
-- Accept a target role
-- Accept an experience level:
+- Enter a target role
+- Choose an experience level:
   - Intern
   - Entry-level
   - Junior
   - Senior
-- Accept an optional job description
-- Create a new interview session
-- Generate and store five behavioral questions
+- Optionally provide a job description
+- Receive five behavioral interview questions
 
-### Interview Sessions
+### Complete an Interview
 
-- Return one question at a time
-- Accept and save a typed answer
-- Track the current question and interview progress
-- Prevent users from skipping required questions
-- Mark the interview as completed after five answers
-- Ensure users can access only their own interviews
+- View one question at a time
+- Submit a typed answer
+- Save each answer
+- Track interview progress
+- Complete the interview after five answers
 
-### AI Scoring and Feedback
+### Receive Feedback
 
-- Evaluate completed interviews with an LLM API
-- Require structured output validated by Pydantic
 - Generate a final score out of 100
-- Evaluate answers using:
+- Evaluate answers for:
   - Relevance
   - STAR structure
   - Specificity
@@ -54,144 +42,194 @@ The primary goal of this project is to build a reliable backend with **FastAPI**
   - Communication
 - Return strengths and areas for improvement
 - Recommend one clear next step
-- Save the completed feedback report
-
-### Basic Voice Support
-
-- Accept an uploaded audio recording
-- Validate the file before processing it
-- Send the audio to the Deepgram API
-- Return the generated transcript
-- Allow the transcript to be submitted through the same answer endpoint used for typed responses
 
 ### Interview History
 
-- Return a user's completed interviews
-- Return the questions and answers from a selected interview
-- Return the saved feedback report
-- Prevent users from viewing another user's history
+- View completed interviews
+- Review previous questions and answers
+- View saved feedback reports
 
 ---
 
-## Stretch Goals
+## Not Required for the MVP
 
-- Real-time voice conversations
-- Barge-in so users can interrupt the AI interviewer
+These features may be added only after the typed interview flow is complete:
+
+- Voice answers and transcription
+- Real-time AI conversations
+- Barge-in and interruption support
 - Adaptive follow-up questions
-- Different interview lengths
 - Resume-based questions
-- Behavioral story bank
-- Progress analytics
-- Company-specific question sets
-- Shareable or downloadable reports
+- Company-specific interviews
+- Progress charts
+- Shareable reports
 - Multiple interviewer voices
-- Multilingual interview practice
+- Multilingual interviews
 
 ---
 
 ## Tech Stack
 
-### Backend
-
-- **API Framework:** Python + FastAPI
+- **Language:** Python
+- **API Framework:** FastAPI
 - **Database:** PostgreSQL
 - **ORM:** SQLAlchemy
-- **Migrations:** Alembic
-- **Validation:** Pydantic
-- **Authentication:** JWT + password hashing
-- **AI Evaluation:** An LLM API with structured Pydantic output
-- **Speech-to-Text:** Deepgram API
-- **Advanced Voice — Stretch Goal:** Deepgram Voice Agent API
-- **Testing:** Pytest + HTTPX / FastAPI TestClient
-- **Containerization:** Docker + Docker Compose
-- **Continuous Integration:** GitHub Actions
-- **Deployment:** A Docker-compatible cloud platform
+- **Data Validation:** Pydantic
+- **Authentication:** JWT and password hashing
+- **AI Feedback:** LLM API with structured output
+- **Testing:** Pytest and FastAPI TestClient
+- **API Documentation:** Swagger UI provided by FastAPI
 
-### Supporting Interface
-
-- **Frontend:** Next.js + TypeScript + Tailwind CSS
-- **Data Fetching:** TanStack Query
-
-The interface exists to demonstrate and consume the backend API. The main project work and weekly milestones are centered on backend development.
+A lightweight frontend may be created later to demonstrate the API, but the team will focus on the backend MVP first.
 
 ---
 
 ## Eight-Week Backend Plan
 
-*Each bullet represents one contributor's main task for the week. This plan covers application development and testing; final release setup will be handled separately by the project manager.*
+Each contributor receives one main task per week. Tasks should remain small enough to complete in one pull request.
 
-### Week 1 — Project Setup
+### Week 1 — First Working Interview Flow
 
-- Set up the FastAPI project and GitHub repository
-- Connect the application to PostgreSQL
-- Create a health-check endpoint to confirm the backend works
-- Add a simple automated test for the health-check endpoint
+- Set up the FastAPI application and create a `GET /health` endpoint that confirms the backend is running.
+- Create the Pydantic model for starting an interview with `target_role`, `experience_level`, and an optional `job_description`.
+- Create a question bank containing at least 10 behavioral questions and a function that selects five questions.
+- Create `POST /interviews/start`, which accepts the interview settings and returns five questions from the question bank.
 
-### Week 2 — User Authentication
+**Week 1 goal:** A user can open Swagger UI, enter their interview settings, and receive five behavioral questions.
 
-- Create the user model and database table
-- Add the user registration endpoint
-- Add login and JWT token creation
-- Protect a route and test the authentication flow
+### Week 2 — Database Setup
 
-### Week 3 — Interview Setup
+- Configure the PostgreSQL connection with SQLAlchemy.
+- Create the interview session model and table.
+- Create the question and answer models.
+- Save a newly started interview and its five questions.
 
-- Create the interview session model
-- Create the interview question model
-- Add an endpoint for starting an interview
-- Generate and save five behavioral questions
+### Week 3 — Typed Answer Flow
 
-### Week 4 — Typed Interview
+- Create an endpoint that returns the current question.
+- Create an endpoint for submitting a typed answer.
+- Save submitted answers in PostgreSQL.
+- Track progress and complete the interview after five answers.
 
-- Return one interview question at a time
-- Add an endpoint for submitting typed answers
-- Save each answer in PostgreSQL
-- Track progress and complete the interview after five answers
+### Week 4 — User Authentication
 
-### Week 5 — Feedback
+- Create the user model and database table.
+- Add a user registration endpoint with password hashing.
+- Add login and JWT token creation.
+- Protect interview routes so users access only their own interviews.
 
-- Create the scoring rubric and feedback schema
-- Send completed answers to the AI evaluation service
-- Generate the score, strengths, and areas for improvement
-- Save and return the final feedback report
+### Week 5 — AI Feedback
 
-### Week 6 — Basic Voice Mode
+- Create the scoring rubric and feedback schema.
+- Send completed answers to the AI service.
+- Return a score, strengths, improvements, and next step.
+- Save the completed feedback report.
 
-- Add an endpoint for uploading an audio answer
-- Validate the uploaded audio file
-- Use Deepgram to convert the audio into text
-- Submit the transcript through the existing answer flow
+### Week 6 — Interview History
 
-### Week 7 — History and Testing
+- Create an endpoint for listing completed interviews.
+- Create an endpoint for viewing one completed interview.
+- Return the saved questions, answers, and feedback.
+- Test that users cannot access another user's interviews.
 
-- Add endpoints for viewing past interviews and reports
-- Make sure users can access only their own interviews
-- Test the main authentication and interview routes
-- Connect the full flow and fix important bugs
+### Week 7 — Testing and Integration
 
-### Week 8 — Final Testing and Demo
+- Test registration, login, and protected routes.
+- Test starting and completing an interview.
+- Test AI feedback and invalid responses.
+- Connect the complete flow and fix important bugs.
 
-- Test registration, login, and protected routes
-- Test the complete typed interview flow
-- Test AI feedback, interview history, and voice transcription
-- Fix final bugs and finish the documentation and demo
+### Week 8 — Containerization, Deployment, and Demo
+
+- Improve error messages and input validation.
+- Test the full application from beginning to end.
+- Containerize the application and database with Docker.
+- Deploy the application, finish the documentation, and prepare the final demo.
 
 ---
 
 ## MVP Completion Checklist
 
-The backend MVP is complete when:
+The MVP is complete when:
 
-- Users can register and log in securely
-- Protected routes require a valid JWT
-- Users can create and complete a five-question interview
-- Questions, answers, progress, and reports are stored in PostgreSQL
-- Completed interviews receive structured AI feedback
-- Audio responses can be transcribed and submitted as text
+- Users can register and log in
+- Users can start a five-question behavioral interview
+- Users can submit one typed answer per question
+- Interview progress is stored in PostgreSQL
+- Completed interviews receive structured feedback
 - Users can review their previous interviews and reports
-- Users cannot access another user's data
-- Important success and failure cases are covered by automated tests
-- The API is deployed and documented
+- Users cannot access another user's interview data
+- The main success and failure cases are tested
+- The full flow can be demonstrated through Swagger UI
+
+---
+
+## Suggested Project Structure
+
+```text
+mockwright/
+├── app/
+│   ├── main.py
+│   ├── database.py
+│   ├── models/
+│   ├── schemas/
+│   ├── routers/
+│   └── services/
+├── tests/
+├── .env.example
+├── .gitignore
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## Running the Project
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/jalenabdi/Mockwright.git
+cd Mockwright
+```
+
+### 2. Create a virtual environment
+
+```bash
+python -m venv venv
+```
+
+Activate it on Windows:
+
+```bash
+venv\Scripts\activate
+```
+
+Activate it on macOS or Linux:
+
+```bash
+source venv/bin/activate
+```
+
+### 3. Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 4. Start the Backend
+
+```bash
+uvicorn app.main:app --reload
+```
+
+### 5. Open the API Documentation
+
+Visit:
+
+```text
+http://127.0.0.1:8000/docs
+```
 
 ---
 
@@ -199,118 +237,61 @@ The backend MVP is complete when:
 
 ### Main Branch
 
-- `main` must always remain stable.
+- Keep `main` stable.
 - Do not commit directly to `main`.
-- All changes must enter through an approved pull request.
+- Submit every task through a pull request.
+- Only the project manager merges pull requests.
 
 ### Feature Branches
 
-Create every branch from the latest version of `main`.
+Create a branch from the newest version of `main`:
 
-Use this naming pattern:
-
-```text
-type/short_description
+```bash
+git checkout main
+git pull origin main
+git checkout -b feature/short_description
 ```
 
 Examples:
 
 ```text
-feature/auth_jwt
-feature/interview_sessions
-feature/answer_submission
-feature/ai_feedback
-feature/voice_transcription
-fix/login_error
-test/interview_routes
-```
-
-Create a branch with:
-
-```bash
-git checkout main
-git pull origin main
-git checkout -b feature/interview_sessions
+feature/health_endpoint
+feature/interview_schema
+feature/question_bank
+feature/start_interview
 ```
 
 ---
 
 ## Development Process
 
-1. Select or receive a GitHub issue.
+1. Receive or select a task.
 2. Pull the newest version of `main`.
-3. Create a branch for the issue.
-4. Implement and test the change.
-5. Push the branch to GitHub.
-6. Open a pull request into `main`.
-7. Address review feedback.
-8. Wait for the project manager to merge the pull request.
+3. Create a feature branch.
+4. Complete only the assigned task.
+5. Test the change locally.
+6. Push the branch to GitHub.
+7. Open a pull request into `main`.
+8. Address review feedback and wait for the project manager to merge it.
 
 Keep each branch and pull request focused on one task.
 
 ---
 
-## Pull Request Rules
+## Pull Request Checklist
 
-- Every code change requires a pull request.
-- A pull request must include:
-  - A clear description of the change
-  - A summary of the files or features added
-  - Testing that was performed
-  - Database changes, if applicable
-  - API request and response examples, if applicable
-  - Any known issues
-- At least one teammate must review the pull request.
-- The author cannot approve or merge their own pull request.
-- Only the project manager performs the final merge into `main`.
-- Never commit passwords, API keys, `.env` files, or other secrets.
+Before opening a pull request, confirm that:
+
+- The application still runs
+- The assigned feature works
+- Unrelated files were not changed
+- No passwords, API keys, or `.env` files were committed
+- The pull request explains what changed and how it was tested
 
 Example pull request title:
 
 ```text
-Add interview session endpoint
+Add interview question bank
 ```
 
 ---
-
-## Example Workflow
-
-```bash
-git checkout main
-git pull origin main
-git checkout -b feature/interview_sessions
-
-# Implement and test the feature
-
-git add .
-git commit -m "Add interview session endpoint"
-git push origin feature/interview_sessions
-```
-
-Then open a pull request, request a review, address any feedback, and wait for the project manager to merge it.
-
----
-
-## Resources
-
-### Everyone Should Watch
-
-- [Git and GitHub for Beginners — Crash Course](https://www.youtube.com/watch?v=RGOj5yH7evk)
-- [What Is a REST API?](https://www.youtube.com/watch?v=lsMQRaeKNDk)
-- [Docker Compose Tutorial](https://www.youtube.com/watch?v=MVIcrmeV_6c)
-- [System Design for Beginners](https://www.youtube.com/watch?v=m8Icp_Cid5o)
-
-### Backend Team
-
-- [FastAPI Course for Beginners](https://www.youtube.com/watch?v=tLKKmouUams)
-- [Python API Development — Comprehensive Course](https://www.youtube.com/watch?v=0sOvCWFmrtA)
-- [PostgreSQL Full Course for Beginners](https://www.youtube.com/watch?v=qw--VYLpxG4)
-- [Pytest Tutorial — How to Test Python Code](https://www.youtube.com/watch?v=cHYq1MRoyI0)
-
-> Some videos may use older library versions. Use them to learn the concepts, then check the current official documentation while implementing features.
-
----
-
-## Project Status
-
-Mockwright is currently in the planning and setup stage. The team will build and stabilize the typed interview backend before adding voice transcription and advanced voice features.
