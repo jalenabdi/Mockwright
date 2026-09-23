@@ -21,5 +21,9 @@ def get_random_behavioral_question(count : int = 5):
 
 random_behavioral_questions = get_random_behavioral_question() 
 
-for random_behavioral_question in random_behavioral_questions:
-    print(random_behavioral_question)  
+def print_random_behavioral_questions():
+    """
+    Prints a list of random behavioral questions.
+    """
+    for random_behavioral_question in random_behavioral_questions:
+        print(random_behavioral_question)
