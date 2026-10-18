@@ -99,7 +99,11 @@ def save_answer(
         raise BlankAnswerError("Answer text cannot be blank.")
 
     try:
-        interview = db.get(Interview, interview_id, with_for_update=True)
+        interview = db.execute(
+            select(Interview)
+            .where(Interview.id == interview_id)
+            .with_for_update()
+        ).scalar_one_or_none()
         if interview is None:
             raise InterviewNotFoundError(f"Interview {interview_id!r} was not found.")
 
