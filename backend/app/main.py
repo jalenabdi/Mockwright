@@ -1,13 +1,15 @@
-from fastapi import FastAPI, HTTPException, status, Depends
+from fastapi import Depends, FastAPI, HTTPException
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
-from .database import get_db
-from pydantic import BaseModel
+
 from .behave_questions import get_random_behavioral_question
-from .models.answer import Answer
-from .schemas.typed_answer import TypedAnswerInput, TypedAnswerReturn
-from .models.interview_question import InterviewQuestion
+from .database import get_db
+from .models import Interview, InterviewQuestion
+from .routers.interviews import router as interviews_router
+from .schemas.interview import StartInterviewRequest
 
 app = FastAPI()
+app.include_router(interviews_router)
 
 
 @app.get("/health")
@@ -15,56 +17,47 @@ def health_status():
     return {"status": "ok"}
 
 
-class InterviewSettings(BaseModel):
-    interview_type: str
-    role: str
+@app.post("/interviews/start", status_code=201)
+def start_interview(settings: StartInterviewRequest, db: Session = Depends(get_db)):
+    selected_questions = get_random_behavioral_question(count=5)
 
-
-@app.post("/interviews/start")
-def start_interview(settings: InterviewSettings):
-    questions = get_random_behavioral_question()
-    return {"questions": questions}
-
-@app.post("/interviews/{interview_id}/answers", status_code=status.HTTP_201_CREATED)
-def submit_answers(interview_id: int, payload: TypedAnswerInput, db: Session = Depends(get_db)):
-    """" Endpoint to submit answers for a specific interview. """
-    # Reject blank answers, questions that do not belong
-    # to the interview, and duplicate submissions
-
-    # The check for empty submissions is already handled by the Pydantic model validation in TypedAnswerInput.
-
-    # Check if the question belongs to the interview
-    question = db.query(InterviewQuestion).filter_by(id=payload.question_id, interview_id=interview_id).first()
-    if not question:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The question does not belong to the specified interview.",
+    try:
+        interview = Interview(
+            target_role=settings.target_role,
+            experience_level=settings.experience_level.value,
+            job_description=settings.job_description,
+            status="in_progress",
+            current_question_position=1,
         )
+        db.add(interview)
+        db.flush()
 
-    # Check for duplicate submissions
-    existing_answer = db.query(Answer).filter_by(interview_question_id=payload.question_id).first()
-    if existing_answer:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="An answer for this question has already been submitted.",
-        )
+        question_rows = [
+            InterviewQuestion(
+                interview_id=interview.id,
+                question_order=order,
+                question_text=text,
+            )
+            for order, text in enumerate(selected_questions, start=1)
+        ]
+        db.add_all(question_rows)
+        db.flush()
 
-    # Create a new answer record if all checks pass
-    new_answer = Answer(
-        interview_question_id=payload.question_id,
-        answer_text=payload.answer_text,    # Text is already stripped and validated by the Pydantic model
-    )
-    
-    db.add(new_answer)
-    db.commit()
-    db.refresh(new_answer)
+        response = {
+            "interview_id": interview.id,
+            "questions": [
+                {
+                    "id": row.id,
+                    "question_order": row.question_order,
+                    "question_text": row.question_text,
+                }
+                for row in question_rows
+            ],
+        }
 
-    return TypedAnswerReturn(
-        id=new_answer.id,
-        question_id=new_answer.interview_question_id,
-        answer_text=new_answer.answer_text,
-    )
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Could not start the interview.")
 
-
-    
-    
+    return response
