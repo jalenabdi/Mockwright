@@ -1,13 +1,15 @@
 from fastapi import Depends, FastAPI, HTTPException
+from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from .behave_questions import get_random_behavioral_question
 from .database import get_db
-from .models import Interview, InterviewQuestion
+from .models import Answer, Interview, InterviewQuestion
 from .schemas.interview import StartInterviewRequest
 
 app = FastAPI()
+app.include_router(interviews_router)
 
 
 @app.get("/health")
@@ -21,9 +23,11 @@ def start_interview(settings: StartInterviewRequest, db: Session = Depends(get_d
 
     try:
         interview = Interview(
-            settings=settings.model_dump(mode="json"),
+            target_role=settings.target_role,
+            experience_level=settings.experience_level,
+            job_description=settings.job_description,
             status="in_progress",
-            current_question_index=1,
+            current_question_position=1,
         )
         db.add(interview)
         db.flush()
@@ -57,3 +61,33 @@ def start_interview(settings: StartInterviewRequest, db: Session = Depends(get_d
         raise HTTPException(status_code=500, detail="Could not start the interview.")
 
     return response
+
+
+@app.get("/interviews/{interview_id}")
+def get_interview(interview_id: int, db: Session = Depends(get_db)):
+    interview = db.get(Interview, interview_id)
+    if interview is None:
+        raise HTTPException(status_code=404, detail="Interview not found.")
+
+    total_question_count = db.scalar(
+        select(func.count(InterviewQuestion.id)).where(
+            InterviewQuestion.interview_id == interview.id
+        )
+    )
+    answered_count = db.scalar(
+        select(func.count(Answer.id))
+        .join(InterviewQuestion, Answer.interview_question_id == InterviewQuestion.id)
+        .where(InterviewQuestion.interview_id == interview.id)
+    )
+
+    current_question_number = (
+        None if interview.status == "completed" else interview.current_question_position
+    )
+
+    return {
+        "interview_id": interview.id,
+        "status": interview.status,
+        "answered_count": answered_count,
+        "total_question_count": total_question_count,
+        "current_question_number": current_question_number,
+    }
