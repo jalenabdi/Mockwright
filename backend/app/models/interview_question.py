@@ -1,7 +1,9 @@
+# backend/app/models/interview_question.py
 from sqlalchemy import CheckConstraint, Integer, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
+from app.models.answer import Answer
 
 
 class InterviewQuestion(Base):

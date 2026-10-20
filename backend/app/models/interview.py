@@ -1,28 +1,16 @@
-from datetime import datetime
-from sqlalchemy import DateTime, func, Integer, Text, JSON
-from sqlalchemy.orm import Mapped, mapped_column
-
+# backend/app/models/interview.py
+from sqlalchemy import Column, Integer, String, DateTime
+from sqlalchemy.sql import func
 from .base import Base
-
 
 class Interview(Base):
     __tablename__ = "interviews"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    settings: Mapped[dict] = mapped_column(JSON, nullable=False)
-    status: Mapped[str] = mapped_column(Text, nullable=False)
-    current_question_index: Mapped[int] = mapped_column(Integer, nullable=False)
-
-    # Timestamps
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        nullable=False,
-    )
-
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
-        nullable=False,
-    )
+    id = Column(Integer, primary_key=True, index=True)
+    target_role = Column(String, nullable=False)
+    experience_level = Column(String, nullable=False)
+    job_description = Column(String, nullable=True)
+    status = Column(String, default="in_progress", nullable=False)
+    current_question_position = Column(Integer, default=1, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())

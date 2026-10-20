@@ -5,9 +5,11 @@ from sqlalchemy.orm import Session
 from .behave_questions import get_random_behavioral_question
 from .database import get_db
 from .models import Interview, InterviewQuestion
+from .routers.interviews import router as interviews_router
 from .schemas.interview import StartInterviewRequest
 
 app = FastAPI()
+app.include_router(interviews_router)
 
 
 @app.get("/health")
