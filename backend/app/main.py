@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from fastapi import Depends, FastAPI, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
@@ -11,6 +9,7 @@ from .models import Answer, Interview, InterviewQuestion
 from .schemas.interview import StartInterviewRequest
 
 app = FastAPI()
+app.include_router(interviews_router)
 
 
 @app.get("/health")
@@ -24,12 +23,14 @@ def start_interview(settings: StartInterviewRequest, db: Session = Depends(get_d
 
     try:
         interview = Interview(
-            settings=settings.model_dump(mode="json"),
+            target_role=settings.target_role,
+            experience_level=settings.experience_level,
+            job_description=settings.job_description,
             status="in_progress",
-            current_question_index=1,
+            current_question_position=1,
         )
         db.add(interview)
-        db.flush()  # gives the interview an id
+        db.flush()
 
         question_rows = [
             InterviewQuestion(
@@ -54,7 +55,7 @@ def start_interview(settings: StartInterviewRequest, db: Session = Depends(get_d
             ],
         }
 
-        db.commit()  # interview + 5 questions are saved together or not 
+        db.commit()
     except SQLAlchemyError:
         db.rollback()
         raise HTTPException(status_code=500, detail="Could not start the interview.")
@@ -63,7 +64,7 @@ def start_interview(settings: StartInterviewRequest, db: Session = Depends(get_d
 
 
 @app.get("/interviews/{interview_id}")
-def get_interview(interview_id: UUID, db: Session = Depends(get_db)):
+def get_interview(interview_id: int, db: Session = Depends(get_db)):
     interview = db.get(Interview, interview_id)
     if interview is None:
         raise HTTPException(status_code=404, detail="Interview not found.")
@@ -79,9 +80,8 @@ def get_interview(interview_id: UUID, db: Session = Depends(get_db)):
         .where(InterviewQuestion.interview_id == interview.id)
     )
 
-    # Once the interview is completed there is no more questions
     current_question_number = (
-        None if interview.status == "completed" else interview.current_question_index
+        None if interview.status == "completed" else interview.current_question_position
     )
 
     return {
