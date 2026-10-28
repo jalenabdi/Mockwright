@@ -23,9 +23,11 @@ def start_interview(settings: StartInterviewRequest, db: Session = Depends(get_d
 
     try:
         interview = Interview(
-            settings=settings.model_dump(mode="json"),
+            target_role=settings.target_role,
+            experience_level=settings.experience_level.value,
+            job_description=settings.job_description,
             status="in_progress",
-            current_question_index=1,
+            current_question_position=1,
         )
         db.add(interview)
         db.flush()
