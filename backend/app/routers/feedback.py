@@ -25,7 +25,7 @@ def _saved_report(db: Session, interview_id: int) -> FeedbackReport | None:
     saved = db.scalar(select(Feedback).where(Feedback.interview_id == interview_id))
     if saved is None:
         return None
-    return FeedbackReport.model_validate(saved.report)
+    return FeedbackReport.model_validate(saved, from_attributes=True)
 
 
 @router.post(
@@ -39,7 +39,7 @@ def create_feedback(
     db: Session = Depends(get_db),
 ):
     """Create the interview's feedback report, or return the one already saved."""
-    # 1. If already have a report, return it and do not call Gemini again.
+    # 1. Already have a report? Return it and do not call Gemini again.
     existing = _saved_report(db, interview.id)
     if existing is not None:
         response.status_code = status.HTTP_200_OK
@@ -81,19 +81,21 @@ def create_feedback(
 
     # 4. Save the report. There can be only one report per interview.
     try:
-        db.add(Feedback(interview_id=interview.id, report=report.model_dump(mode="json")))
+        db.add(Feedback(interview_id=interview.id, **report.model_dump(mode="json")))
         db.commit()
     except IntegrityError:
-        # A simultaneous request saved a report first: return that one.
         db.rollback()
+        # A simultaneous request may have saved a report first: return that one.
         existing = _saved_report(db, interview.id)
-        if existing is None:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Could not save the feedback.",
-            )
-        response.status_code = status.HTTP_200_OK
-        return existing
+        if existing is not None:
+            response.status_code = status.HTTP_200_OK
+            return existing
+        # Otherwise the generated report broke a database rule (for example a score range).
+        logger.warning("Generated feedback rejected by the database for interview %s", interview.id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not generate feedback right now. Please try again.",
+        )
     except SQLAlchemyError:
         db.rollback()
         raise HTTPException(

@@ -7,18 +7,15 @@ from .database import get_db
 from .dependencies import get_current_user
 from .models import Interview, InterviewQuestion
 from .models.user import User
-<<<<<<< HEAD
-from .routers.feedback import router as feedback_router  # new
-=======
 from .routers.auth import router as auth_router
->>>>>>> week4_current_user
+from .routers.feedback import router as feedback_router
 from .routers.interviews import router as interviews_router
 from .schemas.interview import StartInterviewRequest
 
 app = FastAPI()
 app.include_router(auth_router)
 app.include_router(interviews_router)
-app.include_router(feedback_router)  # new
+app.include_router(feedback_router)
 
 
 @app.get("/health")
