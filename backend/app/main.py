@@ -7,10 +7,12 @@ from .database import get_db
 from .dependencies import get_current_user
 from .models import Interview, InterviewQuestion
 from .models.user import User
+from .routers.auth import router as auth_router
 from .routers.interviews import router as interviews_router
 from .schemas.interview import StartInterviewRequest
 
 app = FastAPI()
+app.include_router(auth_router)
 app.include_router(interviews_router)
 
 
