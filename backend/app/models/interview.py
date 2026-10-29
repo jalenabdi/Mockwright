@@ -1,5 +1,5 @@
 # backend/app/models/interview.py
-from sqlalchemy import Column, Integer, String, DateTime
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
 from sqlalchemy.sql import func
 from .base import Base
 
@@ -7,6 +7,7 @@ class Interview(Base):
     __tablename__ = "interviews"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     target_role = Column(String, nullable=False)
     experience_level = Column(String, nullable=False)
     job_description = Column(String, nullable=True)
