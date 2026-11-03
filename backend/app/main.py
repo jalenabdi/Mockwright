@@ -4,12 +4,16 @@ from sqlalchemy.orm import Session
 
 from .behave_questions import get_random_behavioral_question
 from .database import get_db
+from .dependencies import get_current_user
 from .models import Interview, InterviewQuestion
+from .models.user import User
 from .routers.auth import router as auth_router
+from .routers.interviews import router as interviews_router
 from .schemas.interview import StartInterviewRequest
 
 app = FastAPI()
 app.include_router(auth_router)
+app.include_router(interviews_router)
 
 
 @app.get("/health")
@@ -18,11 +22,16 @@ def health_status():
 
 
 @app.post("/interviews/start", status_code=201)
-def start_interview(settings: StartInterviewRequest, db: Session = Depends(get_db)):
+def start_interview(
+    settings: StartInterviewRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     selected_questions = get_random_behavioral_question(count=5)
 
     try:
         interview = Interview(
+            user_id=current_user.id,
             target_role=settings.target_role,
             experience_level=settings.experience_level.value,
             job_description=settings.job_description,

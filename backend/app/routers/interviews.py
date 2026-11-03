@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.dependencies import get_owned_interview
 from app.models.answer import Answer
 from app.models.interview import Interview
 from app.models.interview_question import InterviewQuestion
@@ -12,15 +13,10 @@ router = APIRouter(prefix="/interviews", tags=["Interviews"])
 
 
 @router.get("/{interview_id}/current-question")
-def get_current_question(interview_id: int, db: Session = Depends(get_db)):
-    interview = db.query(Interview).filter(Interview.id == interview_id).first()
-
-    if not interview:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Interview not found.",
-        )
-
+def get_current_question(
+    interview: Interview = Depends(get_owned_interview),
+    db: Session = Depends(get_db),
+):
     if interview.status == "completed":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -30,7 +26,7 @@ def get_current_question(interview_id: int, db: Session = Depends(get_db)):
     current_question = (
         db.query(InterviewQuestion)
         .filter(
-            InterviewQuestion.interview_id == interview_id,
+            InterviewQuestion.interview_id == interview.id,
             InterviewQuestion.question_order == interview.current_question_position,
         )
         .first()
@@ -56,18 +52,11 @@ def get_current_question(interview_id: int, db: Session = Depends(get_db)):
 
 @router.post("/{interview_id}/answers", status_code=status.HTTP_201_CREATED)
 def submit_answer(
-    interview_id: int,
     payload: TypedAnswerInput,
+    interview: Interview = Depends(get_owned_interview),
     db: Session = Depends(get_db),
 ):
     """Submit a typed answer for the current question in an interview."""
-    interview = db.query(Interview).filter(Interview.id == interview_id).first()
-    if not interview:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Interview not found.",
-        )
-
     if interview.status == "completed":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -76,7 +65,7 @@ def submit_answer(
 
     question = (
         db.query(InterviewQuestion)
-        .filter_by(id=payload.question_id, interview_id=interview_id)
+        .filter_by(id=payload.question_id, interview_id=interview.id)
         .first()
     )
     if not question:
@@ -109,7 +98,7 @@ def submit_answer(
     db.refresh(new_answer)
 
     total_questions = (
-        db.query(InterviewQuestion).filter_by(interview_id=interview_id).count()
+        db.query(InterviewQuestion).filter_by(interview_id=interview.id).count()
     )
     interview.current_question_position += 1
     if interview.current_question_position > total_questions:
