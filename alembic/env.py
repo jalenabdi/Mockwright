@@ -1,18 +1,28 @@
 import os
 from logging.config import fileConfig
-
-from alembic import context
+import sys
+from pathlib import Path
 from dotenv import load_dotenv
+from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-import backend.app.models  # noqa: F401  (registers models on Base.metadata)
-from backend.app.models.base import Base
+# 0. Load .env FIRST so os.environ can find DATABASE_URL
+# If your .env file is inside the backend folder, change this to: alembic_dir.parent / "backend" / ".env"
+env_path = alembic_dir = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(dotenv_path=env_path)
 
-load_dotenv()
+# 1. Modify sys.path before attempting any app-level imports
+backend_dir = Path(__file__).resolve().parent.parent / "backend"
+sys.path.insert(0, str(backend_dir))
+
+# 2. Now safe to import your application models and base metadata
+import app.models  # noqa: F401  (registers models on Base.metadata)
+from app.models.base import Base
 
 config = context.config
 
-database_url = os.environ["DATABASE_URL"]
+# Safely get DATABASE_URL with a fallback if needed
+database_url = os.getenv("DATABASE_URL", "sqlite:///./backend/mockwright.db")
 config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 
 if config.config_file_name is not None:
