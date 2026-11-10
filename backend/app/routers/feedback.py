@@ -104,3 +104,15 @@ def create_feedback(
         )
 
     return report
+
+@router.get("/{interview_id}/feedback", response_model=FeedbackReport)
+def get_feedback(interview: Interview = Depends(get_owned_interview), db: Session = Depends(get_db)):
+    """Get the feedback report for the user's interview."""
+    feedback_report = _saved_report(db, interview.id)
+    # If no feedback report exists
+    if feedback_report is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Feedback was not found for this interview.",
+        )
+    return feedback_report
