@@ -12,11 +12,13 @@ from .routers.auth import router as auth_router
 from .routers.feedback import router as feedback_router
 from .routers.interviews import router as interviews_router
 from .schemas.interview import StartInterviewRequest
+from .routers.voice import router as voice_router
 
 app = FastAPI()
 app.include_router(auth_router)
 app.include_router(interviews_router)
 app.include_router(feedback_router)
+app.include_router(voice_router)
 
 
 @app.get("/health")
