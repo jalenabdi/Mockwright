@@ -2,30 +2,19 @@
 
 This is the one place an answer gets written and an interview's progress
 advanced. It has no dependency on HTTP or FastAPI, so the same function can
-be called from a REST route today and from a voice transcript pipeline in
-Week 6 without changes.
+be called from a REST route and from the voice transcript pipeline.
 
---- Assumed Interview model contract ---
-The Interview model lives on a separate, not-yet-merged branch. This module
-is written against the following contract so it can be built and tested on
-its own; see the PR description for the full note to reviewers.
+--- Interview model contract ---
+    Interview.status                    : str  # STATUS_IN_PROGRESS | STATUS_COMPLETED
+    Interview.current_question_position : int  # 1-based. The current question has
+                                               # question_order == current_question_position.
+                                               # It goes past the total once the last
+                                               # question is answered.
+    Interview.updated_at                : datetime  # set by this service on every save
 
-    from backend.app.models.interview import Interview
-
-    Interview.status                  : str   # STATUS_IN_PROGRESS | STATUS_COMPLETED
-    Interview.current_question_index  : int   # 0-based; equals the number of
-                                               # answered questions. The current
-                                               # question has
-                                               # question_order == current_question_index + 1.
-    Interview.updated_at              : datetime  # set by this service on every save
-
-The primary key type (int vs UUID) is undecided, so interview_id is typed
-loosely (uuid.UUID | int) and only ever compared with plain equality, never
-assumed to be an Integer column.
-
-Interview.questions is NOT assumed to exist as a relationship. Questions are
-loaded with an explicit select() on InterviewQuestion filtered by
-interview_id instead.
+The primary key type (int vs UUID) is not assumed: interview_id is only ever
+compared with plain equality. Questions are loaded with an explicit select()
+on InterviewQuestion filtered by interview_id.
 """
 
 from __future__ import annotations
@@ -38,9 +27,9 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from backend.app.models.answer import Answer
-from backend.app.models.interview import Interview
-from backend.app.models.interview_question import InterviewQuestion
+from ..models.answer import Answer
+from ..models.interview import Interview
+from ..models.interview_question import InterviewQuestion
 
 from .exceptions import (
     AnswerAlreadyExistsError,
@@ -51,9 +40,6 @@ from .exceptions import (
     QuestionOutOfOrderError,
 )
 
-# Allowed values of Interview.status. Defined as constants here (rather than
-# imported from an enum on the model) so there's one place to change if the
-# model later switches to a real enum type.
 STATUS_IN_PROGRESS = "in_progress"
 STATUS_COMPLETED = "completed"
 
@@ -82,7 +68,7 @@ def save_answer(
     Runs as one transaction: locks the interview row (SELECT ... FOR UPDATE)
     so two simultaneous submissions for the same interview can't both
     advance progress, validates the question and current position, saves
-    the answer, advances current_question_index by one, and marks the
+    the answer, advances current_question_position by one, and marks the
     interview completed once every one of its questions has an answer.
 
     Blank-text input is rejected before any database work, so bad input
@@ -124,7 +110,7 @@ def save_answer(
         if existing_answer is not None:
             raise AnswerAlreadyExistsError(f"Question {question_id!r} already has an answer.")
 
-        current_order = interview.current_question_index + 1
+        current_order = interview.current_question_position
         if question.question_order != current_order:
             raise QuestionOutOfOrderError(
                 f"Question {question_id!r} has order {question.question_order}, "
@@ -135,7 +121,7 @@ def save_answer(
         db.add(answer)
         db.flush()
 
-        interview.current_question_index += 1
+        interview.current_question_position += 1
 
         total_questions = (
             db.scalar(
@@ -176,7 +162,7 @@ def save_answer(
         next_question = db.scalar(
             select(InterviewQuestion)
             .where(InterviewQuestion.interview_id == interview_id)
-            .where(InterviewQuestion.question_order == interview.current_question_index + 1)
+            .where(InterviewQuestion.question_order == interview.current_question_position)
         )
 
     return AnswerResult(
