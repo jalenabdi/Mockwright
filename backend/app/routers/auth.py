@@ -1,11 +1,12 @@
 """Registration, login (JWT issuance) and the current-user endpoint."""
 
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from ..core.security import (
     DUMMY_PASSWORD_HASH,
@@ -17,6 +18,8 @@ from ..core.security import (
 from ..dependencies import CurrentUser, DbSession
 from ..models import User
 from ..schemas.auth import RegisterRequest, Token, UserOut
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -59,8 +62,14 @@ def login_for_access_token(
     if user is not None:
         password_ok, new_hash = verify_and_update_password(form_data.password, user.hashed_password)
         if password_ok and new_hash is not None:
-            user.hashed_password = new_hash  # move older hashes to the current, faster settings
-            db.commit()
+            # Move older hashes to the current, faster settings. If saving fails, the
+            # login still succeeds and the upgrade is tried again next time.
+            user.hashed_password = new_hash
+            try:
+                db.commit()
+            except SQLAlchemyError:
+                db.rollback()
+                logger.warning("Could not save an upgraded password hash for user %s", user.id)
     else:
         verify_password(form_data.password, DUMMY_PASSWORD_HASH)
         password_ok = False
