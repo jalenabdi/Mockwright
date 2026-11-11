@@ -4,9 +4,11 @@
 
 ## Overview
 
-**Mockwright** is a voice-first behavioral interview practice platform. Users choose a target role and experience level, complete a live five-question interview with an AI interviewer, and receive structured feedback on their answers. A typed-answer option is also available.
+**Mockwright** is a voice-first behavioral interview practice platform. Users choose a target role and experience level, complete a timed five-question interview with an AI interviewer, and receive structured feedback on their answers. The interview is a real back-and-forth: the interviewer can ask follow-up questions when an answer leaves gaps, and can base its questions on the candidate's saved resume. Answers can be spoken (with an optional webcam recording that captures both sides of the conversation) or typed.
 
-The goal is to build a small, reliable MVP with **Python, FastAPI, PostgreSQL, the Deepgram Voice Agent API, and AI-generated feedback**. Real-time one-on-one speaking is a required part of the MVP.
+The app is built with a **React + Vite frontend on Cloudflare Workers**, a **FastAPI backend on Render**, a **PostgreSQL database on Supabase**, **Deepgram** for live speech, and **Gemini** for adaptive questions and feedback.
+
+**Live:** https://mockwright.jalenajj19.workers.dev
 
 ---
 
@@ -21,28 +23,38 @@ The goal is to build a small, reliable MVP with **Python, FastAPI, PostgreSQL, t
   - Junior
   - Senior
 - Optionally provide a job description
+- Optionally upload a resume (PDF, Word or text, up to 5 MB). It's saved to the account, so it only needs uploading once, and can be replaced or removed at any time
+- Choose whether this interview should ask about the resume ("Ask questions based on my resume")
 - Receive five behavioral interview questions
 
 ### Complete an Interview
 
 - View one question at a time
 - Answer through live voice or text
-- Save each answer
+- Get up to two follow-up questions per question when an answer is vague or missing a result
+- Save each answer and follow-up answer
 - Track interview progress
-- Complete the interview after five answers
+- Complete the interview after five questions
 
 ### Live Voice Interview
 
-- Use the browser microphone to speak with the AI interviewer
-- Use the Deepgram Voice Agent API for real-time listening and speaking
-- Hear each interview question read aloud
-- Receive live transcripts of spoken answers
-- Allow the user to interrupt the AI interviewer naturally
-- Save voice transcripts through the same answer flow used for typed answers
+- Use the browser microphone to answer out loud
+- Hear each question and follow-up read aloud (Deepgram text-to-speech, streamed so playback starts almost immediately)
+- Receive live transcripts of spoken answers (Deepgram streaming speech-to-text)
+- Review the transcript, then save it through the same answer flow used for typed answers
+
+### Timed, Recorded Answers
+
+- Answering starts as soon as the question has been read aloud (no separate prep time)
+- 3 minutes to answer each question and 2 minutes for each follow-up, with a warning in the last 30 seconds
+- Optionally record with the webcam and microphone. Each question gets one video covering the whole exchange (the question, the answer and any follow-ups), with the interviewer's voice mixed in
+- Watch the recordings again on the Feedback page, split by question
+- Delete interviews (and their recordings) from History
 
 ### Receive Feedback
 
 - Generate a final score out of 100
+- Grade each question from 0 to 100 with a one-sentence reason (follow-up answers count toward their question)
 - Evaluate answers for:
   - Relevance
   - STAR structure
@@ -64,8 +76,6 @@ The goal is to build a small, reliable MVP with **Python, FastAPI, PostgreSQL, t
 
 These features may be added only after the required MVP is complete:
 
-- Adaptive follow-up questions
-- Resume-based questions
 - Company-specific interviews
 - Progress charts
 - Shareable reports
@@ -76,19 +86,39 @@ These features may be added only after the required MVP is complete:
 
 ## Tech Stack
 
-- **Language:** Python
-- **API Framework:** FastAPI
-- **Database:** PostgreSQL
-- **ORM:** SQLAlchemy
-- **Data Validation:** Pydantic
-- **Authentication:** JWT and password hashing
-- **AI Feedback:** Gemini API with structured output
-- **Live Voice:** [Deepgram Voice Agent API](https://developers.deepgram.com/docs/voice-agent)
-- **Real-Time Communication:** WebSockets
-- **Testing:** Pytest and FastAPI TestClient
-- **API Documentation:** Swagger UI provided by FastAPI
+### Frontend
 
-A lightweight browser interface is required for microphone access, live audio, and the voice interview controls. The main engineering focus remains the backend and Deepgram integration.
+- **Framework:** React 19 with TypeScript
+- **Build Tool:** Vite
+- **Routing:** React Router
+- **Styling:** Tailwind CSS 4
+- **Browser APIs:** `getUserMedia`, Web Audio (PCM microphone streaming, and mixing the interviewer's voice into recordings), `MediaSource` (streamed question audio), `MediaRecorder` (webcam recording)
+- **Hosting:** Cloudflare Workers (static assets), built automatically by Cloudflare Workers Builds from `main`
+
+### Backend
+
+- **Language:** Python 3.12
+- **API Framework:** FastAPI with Uvicorn
+- **ORM and Migrations:** SQLAlchemy 2 and Alembic
+- **Data Validation:** Pydantic
+- **Authentication:** JWT (PyJWT) and Argon2 password hashing (pwdlib)
+- **AI Questions and Feedback:** Gemini API (`google-genai`) with structured output. A request that stalls for 3 seconds is sent again and the first reply is used
+- **Resume Parsing:** `pypdf` for PDFs; Word (`.docx`) and text files are read with the standard library
+- **Live Voice:** Deepgram streaming speech-to-text (`nova-3`) and text-to-speech (`aura-2`), relayed over a FastAPI WebSocket
+- **Answer Recordings:** video files saved on the server's disk (`RECORDINGS_DIR`), with metadata in the database
+- **Hosting:** Render web service (`https://mockwright-api.onrender.com`)
+
+### Database
+
+- **PostgreSQL on Supabase** in production (connected through the Supabase pooler)
+- **SQLite** for local development when `DATABASE_URL` is blank
+
+### Testing and CI
+
+- **Tests:** Pytest and FastAPI TestClient, with fake Gemini and Deepgram clients
+- **CI:** GitHub Actions runs backend tests, a Pyright type check, a migration check, and the frontend build on every pull request and push to `main`
+- **Previews:** Cloudflare builds a preview of the frontend for every pull request
+- **API Documentation:** Swagger UI provided by FastAPI at `/docs`
 
 ---
 
@@ -192,24 +222,31 @@ The MVP is complete when:
 
 ---
 
-## Suggested Project Structure
+## Project Structure
 
 ```text
-mockwright/
+Mockwright/
+├── .github/workflows/ci.yml   # GitHub Actions: tests, type check, migrations, frontend build
+├── alembic/                   # database migrations
 ├── backend/
 │   └── app/
 │       ├── main.py
+│       ├── config.py
 │       ├── database.py
-│       ├── models/
+│       ├── core/security.py   # JWT and password hashing
+│       ├── models/            # User, Interview, InterviewQuestion, Answer, FollowUp, Feedback, Recording, Resume
 │       ├── schemas/
-│       ├── routers/
-│       │   └── voice.py
-│       └── services/
-│           └── deepgram.py
+│       ├── routers/           # auth, interviews, feedback, recordings, resume, voice (WebSocket and speech)
+│       └── services/          # deepgram, gemini_feedback, interview_service, question_generator, resume_parser, recording_store
 ├── frontend/
+│   └── src/
+│       ├── pages/             # Landing, Auth, NewInterview, Interview, Feedback, History
+│       ├── components/
+│       ├── lib/               # API client and auth
+│       └── voice/             # microphone, webcam, countdown, question audio and audio-mixing hooks
 ├── tests/
+├── wrangler.jsonc             # Cloudflare Workers Builds config for the frontend
 ├── .env.example
-├── .gitignore
 ├── requirements.txt
 └── README.md
 ```
@@ -262,6 +299,7 @@ GEMINI_MODEL=gemini-3.1-flash-lite
 DEEPGRAM_API_KEY=            # live transcription and spoken questions
 DEEPGRAM_STT_MODEL=nova-3
 DEEPGRAM_TTS_MODEL=aura-2-thalia-en
+RECORDINGS_DIR=              # where answer videos are saved; blank = recordings/ in the repo root
 CORS_ORIGINS=http://localhost:5173
 ```
 
@@ -300,17 +338,23 @@ cp .env.example .env   # VITE_API_URL=http://localhost:8000
 npm run dev
 ```
 
-Open http://localhost:5173. The pages are Landing, Sign Up, Log In, New Interview, Interview (voice or text), Feedback and History.
+Open http://localhost:5173. The pages are Landing, Sign Up, Log In, New Interview (with resume upload), Interview (voice or text, timed, follow-ups, optional webcam recording), Feedback and History.
 
-Voice needs `DEEPGRAM_API_KEY` in the backend `.env`. Without it, the Interview page shows "Switch to Text" and questions are read aloud by the browser's built-in voice.
+Voice needs `DEEPGRAM_API_KEY` in the backend `.env`. Without it, the Interview page shows "Switch to Text" and questions are read aloud by the browser's built-in voice. Webcam recording needs a browser that supports `MediaRecorder`.
 
-### Deploying with Cloudflare
+### Production Deployment
 
-Everything runs on localhost; Cloudflare exposes it.
+| Part | Host | How it deploys |
+| --- | --- | --- |
+| Frontend | Cloudflare Workers (`mockwright.jalenajj19.workers.dev`) | Cloudflare Workers Builds runs automatically on every push to `main`, using `wrangler.jsonc` |
+| Backend | Render (`mockwright-api.onrender.com`) | Render redeploys the FastAPI service on every push to `main` |
+| Database | Supabase PostgreSQL | Run `alembic upgrade head` against the Supabase `DATABASE_URL` when a PR adds a migration (follow-ups and resumes each added one) |
 
-- **Backend:** run `uvicorn backend.app.main:app --host 127.0.0.1 --port 8000` and publish it with a Cloudflare Tunnel (`cloudflared tunnel --url http://localhost:8000`, or a named tunnel on your domain). Tunnels carry WebSockets, so the voice socket works over `wss://`.
-- **Frontend:** the repo's Cloudflare Workers Builds project (`mockwright`) uses `wrangler.jsonc` at the repo root: it runs `npm ci && npm run build` in `frontend/` and serves `frontend/dist` as a single-page app. Set `VITE_API_URL` to the backend's public `https://` tunnel URL as a build variable in the Cloudflare dashboard. To deploy by hand: `npx wrangler deploy`.
-- Add the frontend's public URL to `CORS_ORIGINS` in the backend `.env`.
+- **Frontend:** `wrangler.jsonc` runs `npm ci && npm run build` in `frontend/` and serves `frontend/dist` as a single-page app. Set `VITE_API_URL=https://mockwright-api.onrender.com` as a build variable in the Cloudflare dashboard. Pull requests get their own preview build. To deploy by hand: `npx wrangler deploy`.
+- **Backend:** set the variables from `.env.example` in Render's environment settings. `DATABASE_URL` is the Supabase connection string (a plain `postgresql://` URL works; the app switches it to the psycopg driver). Start command: `uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT`. Render supports WebSockets, so the voice socket works over `wss://`.
+- **Recordings:** answer videos are saved to `RECORDINGS_DIR` on the Render server. Point it at a Render persistent disk, or videos are lost whenever the service restarts or redeploys.
+- **CORS:** `CORS_ORIGINS` on Render must include the frontend URL (`https://mockwright.jalenajj19.workers.dev`).
+- **Stuck deploy?** If the live site doesn't show a merged change, check the "Workers Builds: mockwright" check on the latest `main` commit. If it's stuck in "queued", retry the build in the Cloudflare dashboard or push a new commit to `main`.
 
 ### 9. Run the Tests
 
@@ -320,9 +364,22 @@ pytest
 
 Tests use an in-memory SQLite database and fake Gemini/Deepgram clients, so they never spend API credits.
 
-### How Questions Adapt
+### How the Interview Adapts
 
-Each interview has five questions, written one at a time. Gemini writes question 1 from the target role, experience level and job description. After every answer, Gemini reads the whole conversation so far and writes the next question: it presses on gaps (a missing result, a vague "we") or moves to a competency not yet covered. If Gemini is unavailable, an unused question from the question bank is used so the interview never stalls.
+Each interview has five main questions, written one at a time. Gemini writes question 1 from the target role, experience level, job description and (if chosen) the resume.
+
+After every answer, one Gemini call reads the whole conversation so far and decides what comes next:
+
+- **Follow up:** if the answer has a gap (a missing result, a vague "we", no detail on the candidate's own part), it asks a short follow-up on the same question. Each question gets at most two.
+- **Move on:** otherwise it writes the next main question, covering a competency not yet discussed.
+
+After the fifth question and its follow-ups, the interview is complete. If Gemini is unavailable, the interview moves on with an unused question from the question bank, so it never stalls.
+
+### Resumes
+
+- `GET /resume`, `PUT /resume?file_name=...` (the file as the raw request body) and `DELETE /resume` manage the signed-in user's one saved resume.
+- Supported files are PDF, Word (`.docx`), `.txt` and `.md`, up to 5 MB. Only the text is kept (up to 20,000 characters, from the first 10 PDF pages). Scanned PDFs with no text layer are rejected with a clear error.
+- Starting an interview with `"use_resume": true` copies the resume text into that interview, so its questions stay consistent even if the resume is replaced later.
 
 ---
 
