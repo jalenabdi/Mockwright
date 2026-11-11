@@ -1,6 +1,8 @@
 import fixWebmDuration from "fix-webm-duration";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { recordingStream } from "./audioMix";
+
 export type CameraStatus = "off" | "starting" | "on" | "blocked" | "missing" | "unsupported" | "lost";
 
 export interface Clip {
@@ -18,7 +20,12 @@ function pickFormat(): string | undefined {
 }
 
 /**
- * The candidate's camera: a live preview plus one recording per answer.
+ * The candidate's camera: a live preview plus one recording per question.
+ *
+ * A recording mixes the candidate's mic with the interviewer's voice (see
+ * audioMix), so the video plays back as the conversation it was. It can be
+ * paused (e.g. during prep time) and resumed; its length counts only the time
+ * it was actually recording.
  *
  * The camera is optional. If it's blocked or missing, `status` says so and
  * `startClip` / `stopClip` do nothing, so the interview carries on without video.
@@ -27,10 +34,13 @@ export function useCamera() {
   const [status, setStatus] = useState<CameraStatus>("off");
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [recording, setRecording] = useState(false);
+  const [paused, setPaused] = useState(false);
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
-  const startedAtRef = useRef(0);
+  const releaseMixRef = useRef<(() => void) | null>(null);
+  const activeMsRef = useRef(0); // recorded time before the latest resume
+  const resumedAtRef = useRef(0);
   const mountedRef = useRef(true);
   const startingRef = useRef(false);
 
@@ -59,7 +69,10 @@ export function useCamera() {
       media.getVideoTracks()[0]?.addEventListener("ended", () => {
         if (streamRef.current !== media) return;
         recorderRef.current = null;
+        releaseMixRef.current?.();
+        releaseMixRef.current = null;
         setRecording(false);
+        setPaused(false);
         media.getTracks().forEach((track) => track.stop());
         streamRef.current = null;
         setStream(null);
@@ -75,12 +88,25 @@ export function useCamera() {
     }
   }, []);
 
+  /** Start a new clip, or resume the current one if it's paused. */
   const startClip = useCallback(() => {
+    const current = recorderRef.current;
+    if (current) {
+      if (current.state === "paused") {
+        current.resume();
+        resumedAtRef.current = performance.now();
+        setRecording(true);
+        setPaused(false);
+      }
+      return;
+    }
     const media = streamRef.current;
     const format = pickFormat();
-    if (!media || !format || recorderRef.current) return;
+    if (!media || !format) return;
     chunksRef.current = [];
-    const recorder = new MediaRecorder(media, {
+    const mixed = recordingStream(media);
+    releaseMixRef.current = mixed.release;
+    const recorder = new MediaRecorder(mixed.stream, {
       mimeType: format,
       videoBitsPerSecond: 600_000,
       audioBitsPerSecond: 64_000,
@@ -90,8 +116,20 @@ export function useCamera() {
     };
     recorder.start(1000);
     recorderRef.current = recorder;
-    startedAtRef.current = performance.now();
+    activeMsRef.current = 0;
+    resumedAtRef.current = performance.now();
     setRecording(true);
+    setPaused(false);
+  }, []);
+
+  /** Pause the current clip (prep time isn't worth recording). */
+  const pauseClip = useCallback(() => {
+    const recorder = recorderRef.current;
+    if (!recorder || recorder.state !== "recording") return;
+    recorder.pause();
+    activeMsRef.current += performance.now() - resumedAtRef.current;
+    setRecording(false);
+    setPaused(true);
   }, []);
 
   /** Finish the current clip. Resolves to null if nothing was being recorded. */
@@ -101,12 +139,18 @@ export function useCamera() {
         const recorder = recorderRef.current;
         recorderRef.current = null;
         setRecording(false);
+        setPaused(false);
         if (!recorder || recorder.state === "inactive") {
           resolve(null);
           return;
         }
-        const durationSeconds = (performance.now() - startedAtRef.current) / 1000;
+        const activeMs =
+          activeMsRef.current + (recorder.state === "recording" ? performance.now() - resumedAtRef.current : 0);
+        const durationSeconds = activeMs / 1000;
+        const releaseMix = releaseMixRef.current;
+        releaseMixRef.current = null;
         recorder.onstop = async () => {
+          releaseMix?.();
           const type = recorder.mimeType.split(";")[0] || "video/webm";
           let video = new Blob(chunksRef.current, { type });
           chunksRef.current = [];
@@ -135,10 +179,13 @@ export function useCamera() {
     const recorder = recorderRef.current;
     recorderRef.current = null;
     setRecording(false);
+    setPaused(false);
     if (recorder && recorder.state !== "inactive") {
       recorder.onstop = null;
       recorder.stop();
     }
+    releaseMixRef.current?.();
+    releaseMixRef.current = null;
     chunksRef.current = [];
   }, []);
 
@@ -151,10 +198,12 @@ export function useCamera() {
         recorder.onstop = null;
         recorder.stop();
       }
+      releaseMixRef.current?.();
+      releaseMixRef.current = null;
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
     };
   }, []);
 
-  return { status, stream, recording, start, startClip, stopClip, discardClip };
+  return { status, stream, recording, paused, start, startClip, pauseClip, stopClip, discardClip };
 }

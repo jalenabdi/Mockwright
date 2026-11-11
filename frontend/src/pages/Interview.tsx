@@ -6,6 +6,7 @@ import { LevelMeter } from "../components/Waveform";
 import { api, ApiError, type FollowUp, type InterviewDetail, type Question } from "../lib/api";
 import { FullPageSpinner } from "../lib/auth";
 import { levelLabel, usePageTitle } from "../lib/format";
+import { wakeAudio } from "../voice/audioMix";
 import { useCamera, type CameraStatus, type Clip } from "../voice/useCamera";
 import { formatClock, useCountdown } from "../voice/useCountdown";
 import { useQuestionAudio, type SpokenLine } from "../voice/useQuestionAudio";
@@ -25,7 +26,9 @@ const MODE_KEY = "mockwright.answerMode";
  * → prep (60s, or "I'm Ready") → answering (up to 3 minutes, recorded)
  * → finishing (last words) → saving → then either a follow-up or the next question.
  * A follow-up is read aloud and goes straight to answering (2 minutes, no prep).
- * One video covers a whole question, follow-ups included.
+ * One video covers a whole question as a conversation: it starts when the question
+ * is read aloud, pauses during prep, and runs through every follow-up. It records
+ * the interviewer's voice as well as the candidate's.
  * An empty answer goes to "empty" instead of saving; a failed save to "save_failed".
  */
 type Phase = "waiting" | "reading" | "prep" | "answering" | "finishing" | "saving" | "empty" | "save_failed";
@@ -273,11 +276,20 @@ export default function Interview() {
     if (!line) return;
     const run = ++runRef.current;
     setPhase("reading");
+    await wakeAudio(); // lets the video record the interviewer's voice too
+    if (run !== runRef.current) return;
+    camera.startClip();
     await audio.play(line);
     if (run !== runRef.current || phaseRef.current !== "reading") return;
     if (line.followUpId) startAnswering();
     else setPhase("prep");
-  }, [audio, currentLine, startAnswering]);
+  }, [audio, camera, currentLine, startAnswering]);
+
+  // Prep time is silent thinking: leave it out of the video.
+  const pauseClip = camera.pauseClip;
+  useEffect(() => {
+    if (phase === "prep") pauseClip();
+  }, [phase, pauseClip]);
 
   // Start each new question or follow-up once it's loaded (after a click if the browser needs one).
   useEffect(() => {
@@ -482,7 +494,11 @@ export default function Interview() {
           <CameraTile stream={camera.stream} status={camera.status} recording={camera.recording} />
           {camera.stream && (
             <p className="mt-3 text-center text-[13px] text-faint">
-              {camera.recording ? `Recording question ${question.question_order}.` : "Recording starts when you start answering."}
+              {camera.recording
+                ? `Recording question ${question.question_order}.`
+                : camera.paused
+                  ? "Recording paused while you prepare."
+                  : "Recording starts when the question is asked."}
             </p>
           )}
         </aside>
