@@ -79,20 +79,17 @@ def start_interview(
     db: Session,
     *,
     user_id: int,
-    target_role: str,
-    experience_level: str,
-    job_description: str | None,
+    context: InterviewContext,
     generator: QuestionGenerator,
 ) -> Interview:
     """Create an interview and its first question in one transaction."""
-    context = InterviewContext(target_role, experience_level, job_description or None)
     first_question = generator.next_question(context, [])
 
     interview = Interview(
         user_id=user_id,
-        target_role=target_role,
-        experience_level=experience_level,
-        job_description=job_description or None,
+        target_role=context.target_role,
+        experience_level=context.experience_level,
+        job_description=context.job_description,
         status=STATUS_IN_PROGRESS,
         current_question_position=1,
     )
