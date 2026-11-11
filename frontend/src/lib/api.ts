@@ -23,6 +23,7 @@ export interface Question {
 
 export interface QuestionWithAnswer extends Question {
   answer_text: string | null;
+  has_recording: boolean;
 }
 
 export interface FeedbackReport {
@@ -115,7 +116,9 @@ interface RequestOptions {
   json?: unknown;
   form?: Record<string, string>;
   auth?: boolean;
-  raw?: boolean;
+  /** Raw body (e.g. a video Blob) sent with its own Content-Type. */
+  body?: Blob;
+  contentType?: string;
 }
 
 async function request(path: string, options: RequestOptions = {}): Promise<Response> {
@@ -126,6 +129,9 @@ async function request(path: string, options: RequestOptions = {}): Promise<Resp
     body = JSON.stringify(options.json);
   } else if (options.form) {
     body = new URLSearchParams(options.form);
+  } else if (options.body) {
+    headers["Content-Type"] = options.contentType ?? options.body.type;
+    body = options.body;
   }
   const token = getToken();
   if (options.auth !== false && token) headers.Authorization = `Bearer ${token}`;
@@ -194,6 +200,29 @@ export const api = {
 
   createFeedback: (id: number) =>
     requestJson<FeedbackReport>(`/interviews/${id}/feedback`, { method: "POST" }),
+
+  deleteInterview: async (id: number): Promise<void> => {
+    await request(`/interviews/${id}`, { method: "DELETE" });
+  },
+
+  uploadRecording: async (
+    interviewId: number,
+    questionId: number,
+    video: Blob,
+    durationSeconds: number,
+  ): Promise<void> => {
+    const seconds = Math.max(0, Math.round(durationSeconds * 10) / 10);
+    await request(`/interviews/${interviewId}/questions/${questionId}/recording?duration_seconds=${seconds}`, {
+      method: "PUT",
+      body: video,
+      contentType: video.type || "video/webm",
+    });
+  },
+
+  recording: async (interviewId: number, questionId: number): Promise<Blob> => {
+    const response = await request(`/interviews/${interviewId}/questions/${questionId}/recording`);
+    return response.blob();
+  },
 
   questionSpeech: async (interviewId: number, questionId: number): Promise<Blob> => {
     const response = await request(`/interviews/${interviewId}/questions/${questionId}/speech`, {
