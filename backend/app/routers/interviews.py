@@ -29,6 +29,7 @@ from ..services.exceptions import (
 )
 from ..services.question_generator import (
     TOTAL_QUESTIONS,
+    InterviewContext,
     QuestionGenerator,
     get_question_generator,
 )
@@ -37,22 +38,17 @@ router = APIRouter(prefix="/interviews", tags=["Interviews"])
 
 Generator = Annotated[QuestionGenerator, Depends(get_question_generator)]
 
-_ERROR_STATUS: dict[type[InterviewServiceError], int] = {
-    InterviewNotFoundError: status.HTTP_404_NOT_FOUND,
-    InterviewAlreadyCompletedError: status.HTTP_409_CONFLICT,
-    QuestionNotInInterviewError: status.HTTP_400_BAD_REQUEST,
-    QuestionOutOfOrderError: status.HTTP_409_CONFLICT,
-    AnswerAlreadyExistsError: status.HTTP_409_CONFLICT,
-    BlankAnswerError: status.HTTP_422_UNPROCESSABLE_CONTENT,
-}
-
-_ERROR_DETAIL: dict[type[InterviewServiceError], str] = {
-    InterviewNotFoundError: "Interview not found.",
-    InterviewAlreadyCompletedError: "This interview has already been completed.",
-    QuestionNotInInterviewError: "The question does not belong to this interview.",
-    QuestionOutOfOrderError: "This question is not the current question for the interview.",
-    AnswerAlreadyExistsError: "An answer for this question has already been submitted.",
-    BlankAnswerError: "Answer text cannot be empty.",
+# Each service error maps to one HTTP status and one user-facing message.
+_ERRORS: dict[type[InterviewServiceError], tuple[int, str]] = {
+    InterviewNotFoundError: (status.HTTP_404_NOT_FOUND, "Interview not found."),
+    InterviewAlreadyCompletedError: (status.HTTP_409_CONFLICT, "This interview has already been completed."),
+    QuestionNotInInterviewError: (status.HTTP_400_BAD_REQUEST, "The question does not belong to this interview."),
+    QuestionOutOfOrderError: (
+        status.HTTP_409_CONFLICT,
+        "This question is not the current question for the interview.",
+    ),
+    AnswerAlreadyExistsError: (status.HTTP_409_CONFLICT, "An answer for this question has already been submitted."),
+    BlankAnswerError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "Answer text cannot be empty."),
 }
 
 
@@ -102,7 +98,7 @@ def _load_detail(db: Session, interview_id: int) -> InterviewDetail:
 
 @router.post("/start", response_model=InterviewDetail, status_code=status.HTTP_201_CREATED)
 def start_interview(
-    settings: StartInterviewRequest,
+    payload: StartInterviewRequest,
     current_user: CurrentUser,
     db: DbSession,
     generator: Generator,
@@ -111,9 +107,11 @@ def start_interview(
     interview = interview_service.start_interview(
         db,
         user_id=current_user.id,
-        target_role=settings.target_role,
-        experience_level=settings.experience_level.value,
-        job_description=settings.job_description,
+        context=InterviewContext(
+            target_role=payload.target_role,
+            experience_level=payload.experience_level.value,
+            job_description=payload.job_description or None,
+        ),
         generator=generator,
     )
     return _load_detail(db, interview.id)
@@ -193,10 +191,8 @@ def submit_answer(
             db, interview.id, payload.question_id, payload.answer_text
         )
     except InterviewServiceError as error:
-        raise HTTPException(
-            status_code=_ERROR_STATUS.get(type(error), status.HTTP_400_BAD_REQUEST),
-            detail=_ERROR_DETAIL.get(type(error), "Could not save the answer."),
-        )
+        code, detail = _ERRORS.get(type(error), (status.HTTP_400_BAD_REQUEST, "Could not save the answer."))
+        raise HTTPException(status_code=code, detail=detail)
 
     db.refresh(interview)
     next_question = interview_service.ensure_current_question(db, interview, generator)
