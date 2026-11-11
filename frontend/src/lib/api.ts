@@ -36,6 +36,14 @@ export interface FeedbackReport {
   strengths: string[];
   improvements: string[];
   next_step: string;
+  /** One per answer, in question order. Empty for reports saved before grades existed. */
+  question_grades: QuestionGrade[];
+}
+
+export interface QuestionGrade {
+  question_number: number;
+  score: number;
+  comment: string;
 }
 
 export interface InterviewSummary {

@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 
 from backend.app.main import app
-from backend.app.schemas.feedback import FeedbackReport
+from backend.app.schemas.feedback import FeedbackReport, QuestionGrade
 from backend.app.services.gemini_feedback import (
     FeedbackGenerationError,
     FeedbackUnavailableError,
@@ -23,6 +23,9 @@ REPORT = FeedbackReport(
     strengths=["You answered the question that was asked."],
     improvements=["Results were thin."],
     next_step="State one measurable result per answer.",
+    question_grades=[
+        QuestionGrade(question_number=n, score=60 + n, comment=f"Comment on answer {n}.") for n in range(1, 6)
+    ],
 )
 
 
@@ -78,6 +81,21 @@ def test_completed_interview_gets_one_saved_report(client, auth_headers, complet
     assert client.get(url, headers=auth_headers).json() == created.json()
 
 
+def test_saved_report_keeps_a_grade_for_each_question(client, auth_headers, completed_interview, feedback_generator):
+    url = f"/interviews/{completed_interview['id']}/feedback"
+    client.post(url, headers=auth_headers)
+
+    grades = client.get(url, headers=auth_headers).json()["question_grades"]
+
+    assert [(g["question_number"], g["score"], g["comment"]) for g in grades] == [
+        (1, 61, "Comment on answer 1."),
+        (2, 62, "Comment on answer 2."),
+        (3, 63, "Comment on answer 3."),
+        (4, 64, "Comment on answer 4."),
+        (5, 65, "Comment on answer 5."),
+    ]
+
+
 def test_history_and_detail_show_the_saved_score(client, auth_headers, completed_interview, feedback_generator):
     client.post(f"/interviews/{completed_interview['id']}/feedback", headers=auth_headers)
 
@@ -120,6 +138,10 @@ class FakeGeminiModels:
         return SimpleNamespace(parsed=self.parsed, text=None)
 
 
+def _grade(number, score, comment):
+    return SimpleNamespace(question_number=number, score=score, comment=comment)
+
+
 def _scores(**overrides):
     values = dict(
         relevance_score=10,
@@ -130,6 +152,7 @@ def _scores(**overrides):
         strengths=["Clear"],
         improvements=["Add numbers"],
         next_step="Practice results.",
+        question_grades=[_grade(1, 72, "Clear story, but no result.")],
     )
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -155,3 +178,39 @@ def test_gemini_feedback_rejects_out_of_range_scores():
     generator = GeminiFeedbackGenerator(client=SimpleNamespace(models=models), model="m")
     with pytest.raises(FeedbackGenerationError):
         generator.generate(CONTEXT, TURNS)
+
+
+TWO_TURNS = [
+    Turn("Tell me about a launch.", "I shipped checkout v2."),
+    Turn("Tell me about a conflict.", "We disagreed."),
+]
+
+
+def test_gemini_feedback_grades_each_question_in_order():
+    models = FakeGeminiModels(_scores(question_grades=[
+        _grade(2, 40, "  Too short:   no  situation or result. "),
+        _grade(1, 85, "Specific launch with your own decisions."),
+    ]))
+    generator = GeminiFeedbackGenerator(client=SimpleNamespace(models=models), model="m")
+
+    report = generator.generate(CONTEXT, TWO_TURNS)
+
+    assert [g.model_dump() for g in report.question_grades] == [
+        {"question_number": 1, "score": 85, "comment": "Specific launch with your own decisions."},
+        {"question_number": 2, "score": 40, "comment": "Too short: no situation or result."},
+    ]
+
+
+@pytest.mark.parametrize(
+    "grades",
+    [
+        [_grade(1, 80, "Good.")],  # question 2 not graded
+        [_grade(1, 80, "Good."), _grade(1, 70, "Again."), _grade(2, 50, "Thin.")],  # graded twice
+        [_grade(1, 80, "Good."), _grade(2, 140, "Too high.")],  # out of range
+    ],
+)
+def test_gemini_feedback_rejects_incomplete_or_invalid_question_grades(grades):
+    models = FakeGeminiModels(_scores(question_grades=grades))
+    generator = GeminiFeedbackGenerator(client=SimpleNamespace(models=models), model="m")
+    with pytest.raises(FeedbackGenerationError):
+        generator.generate(CONTEXT, TWO_TURNS)

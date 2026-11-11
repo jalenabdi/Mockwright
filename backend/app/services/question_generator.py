@@ -118,6 +118,9 @@ def build_prompt(context: InterviewContext, history: Sequence[Turn]) -> str:
     )
 
 
+QUESTION_TIMEOUT_MS = 10_000  # the lowest deadline Gemini accepts
+
+
 class GeminiQuestionGenerator:
     def __init__(self, client: Any | None = None, model: str | None = None,
                  client_factory: Callable[[], Any] | None = None):
@@ -142,6 +145,10 @@ class GeminiQuestionGenerator:
                 response_mime_type="application/json",
                 response_schema=_GeneratedQuestion,
                 temperature=0.9,
+                # A question normally takes about a second. When Gemini stalls, each try
+                # gives up after 10 s instead of the client's 15 s, so with the one retry
+                # the question bank takes over in about 20 s instead of 30 s.
+                http_options=types.HttpOptions(timeout=QUESTION_TIMEOUT_MS),
             ),
         )
         parsed = response.parsed

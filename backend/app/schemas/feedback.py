@@ -1,6 +1,16 @@
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
+class QuestionGrade(BaseModel):
+    """The grade for one answer: a 0-100 score and one sentence on why."""
+
+    model_config = ConfigDict(from_attributes=True, str_strip_whitespace=True)
+
+    question_number: int = Field(ge=1, description="The question's position in the interview, from 1.")
+    score: int = Field(ge=0, le=100, description="How strong this one answer was, from 0 to 100.")
+    comment: str = Field(min_length=1, description="One sentence explaining the score.")
+
+
 class FeedbackReport(BaseModel):
     """Feedback for a completed interview.
 
@@ -61,6 +71,10 @@ class FeedbackReport(BaseModel):
     next_step: str = Field(
         min_length=1,
         description="One concise, actionable recommendation for continued practice.",
+    )
+    question_grades: list[QuestionGrade] = Field(
+        default_factory=list,
+        description="One grade per answer, in question order. Empty for reports saved before grades existed.",
     )
 
     @model_validator(mode="after")
