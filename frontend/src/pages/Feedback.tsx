@@ -4,7 +4,7 @@ import { useParams } from "react-router";
 import { AppHeader } from "../components/AppHeader";
 import { ScoreCard } from "../components/ScoreCard";
 import { Button, Icon, LinkButton, Spinner } from "../components/ui";
-import { api, ApiError, type FeedbackReport, type InterviewDetail } from "../lib/api";
+import { api, ApiError, type FeedbackReport, type InterviewDetail, type QuestionGrade } from "../lib/api";
 import { FullPageSpinner } from "../lib/auth";
 import { formatDate, levelLabel, usePageTitle } from "../lib/format";
 
@@ -66,6 +66,7 @@ function AnswerRow({
   question,
   answer,
   hasRecording,
+  grade,
 }: {
   interviewId: number;
   questionId: number;
@@ -73,6 +74,7 @@ function AnswerRow({
   question: string;
   answer: string | null;
   hasRecording: boolean;
+  grade: QuestionGrade | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const id = `answer-${order}`;
@@ -90,6 +92,12 @@ function AnswerRow({
         {hasRecording && (
           <span className="hidden shrink-0 rounded-full bg-panel-2 px-2.5 py-1 text-[12px] font-semibold text-muted sm:inline">Video</span>
         )}
+        {grade && (
+          <span className="shrink-0 text-[15px] font-bold tabular-nums" aria-label={`Score ${grade.score} out of 100`}>
+            {grade.score}
+            <span className="text-[12px] font-medium text-muted">/100</span>
+          </span>
+        )}
         <Icon.Chevron
           className={`size-4 shrink-0 text-muted transition-transform duration-200 ${open ? "rotate-90" : ""}`}
           aria-hidden="true"
@@ -98,6 +106,12 @@ function AnswerRow({
       {open && (
         <div id={id} className="rise pb-6 pl-8 pr-8">
           {hasRecording && <AnswerVideo interviewId={interviewId} questionId={questionId} />}
+          {grade && (
+            <div className="mb-5">
+              <p className="mb-1.5 text-[12px] font-semibold uppercase tracking-wide text-faint">Why {grade.score}</p>
+              <p className="text-[15px] leading-relaxed text-fg/90">{grade.comment}</p>
+            </div>
+          )}
           <p className="mb-1.5 text-[12px] font-semibold uppercase tracking-wide text-faint">Your answer</p>
           <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-fg/85">{answer ?? "No answer saved."}</p>
         </div>
@@ -233,6 +247,7 @@ export default function Feedback() {
                 question={q.question_text}
                 answer={q.answer_text}
                 hasRecording={q.has_recording}
+                grade={report?.question_grades?.find((g) => g.question_number === q.question_order)}
               />
             ))}
           </ol>

@@ -118,6 +118,9 @@ def build_prompt(context: InterviewContext, history: Sequence[Turn]) -> str:
     )
 
 
+QUESTION_TIMEOUT_MS = 10_000  # the lowest deadline Gemini accepts
+
+
 class GeminiQuestionGenerator:
     def __init__(self, client: Any | None = None, model: str | None = None,
                  client_factory: Callable[[], Any] | None = None):
@@ -142,6 +145,9 @@ class GeminiQuestionGenerator:
                 response_mime_type="application/json",
                 response_schema=_GeneratedQuestion,
                 temperature=0.9,
+                # A question normally takes under a second. When Gemini stalls, give up
+                # sooner so the question bank answers in seconds, not half a minute.
+                http_options=types.HttpOptions(timeout=QUESTION_TIMEOUT_MS),
             ),
         )
         parsed = response.parsed

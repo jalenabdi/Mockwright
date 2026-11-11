@@ -44,3 +44,20 @@ def test_login_rejects_wrong_password_and_unknown_email_the_same_way(client):
 def test_protected_route_rejects_missing_or_bad_token(client):
     assert client.get("/auth/me").status_code == 401
     assert client.get("/auth/me", headers={"Authorization": "Bearer nope"}).status_code == 401
+
+
+def test_accounts_hashed_with_older_argon2_settings_can_still_log_in(client, session_factory):
+    from pwdlib import PasswordHash
+
+    from backend.app.models import User
+
+    older = PasswordHash.recommended()  # m=65536, t=3, p=4: what accounts were created with before
+    with session_factory() as db:
+        db.add(User(email="old@example.com", hashed_password=older.hash("correct-horse")))
+        db.commit()
+
+    first = login(client, email="old@example.com")
+    second = login(client, email="old@example.com")
+
+    assert first.status_code == second.status_code == 200
+    assert login(client, email="old@example.com", password="wrong-password").status_code == 401

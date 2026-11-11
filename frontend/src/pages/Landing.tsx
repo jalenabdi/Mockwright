@@ -18,6 +18,7 @@ const SAMPLE_REPORT: FeedbackReport = {
   strengths: [],
   improvements: [],
   next_step: "",
+  question_grades: [],
 };
 
 const DEMO_TRANSCRIPT =

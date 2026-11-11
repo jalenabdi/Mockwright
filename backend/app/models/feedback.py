@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Text, UniqueConstraint, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Text, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, PortableJSON
@@ -47,6 +47,10 @@ class Feedback(Base):
     strengths: Mapped[list[str]] = mapped_column(PortableJSON)
     improvements: Mapped[list[str]] = mapped_column(PortableJSON)
     next_step: Mapped[str] = mapped_column(Text)
+    # [{"question_number", "score", "comment"}, ...]; [] for reports saved before grades existed.
+    question_grades: Mapped[list[dict]] = mapped_column(
+        PortableJSON, default=list, server_default=text("'[]'")
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

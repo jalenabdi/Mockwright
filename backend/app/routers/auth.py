@@ -11,6 +11,7 @@ from ..core.security import (
     DUMMY_PASSWORD_HASH,
     create_access_token,
     hash_password,
+    verify_and_update_password,
     verify_password,
 )
 from ..dependencies import CurrentUser, DbSession
@@ -56,7 +57,10 @@ def login_for_access_token(
     user = db.scalar(select(User).where(User.email == email))
 
     if user is not None:
-        password_ok = verify_password(form_data.password, user.hashed_password)
+        password_ok, new_hash = verify_and_update_password(form_data.password, user.hashed_password)
+        if password_ok and new_hash is not None:
+            user.hashed_password = new_hash  # move older hashes to the current, faster settings
+            db.commit()
     else:
         verify_password(form_data.password, DUMMY_PASSWORD_HASH)
         password_ok = False

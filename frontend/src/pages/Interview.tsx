@@ -294,7 +294,9 @@ export default function Interview() {
           );
         }
         if (result.status === "completed" || !result.next_question) {
-          await Promise.allSettled(uploadsRef.current); // finish videos before showing feedback
+          // Score the interview while the last videos upload, so the Feedback page opens with the report ready.
+          // If scoring fails here, the Feedback page tries again.
+          await Promise.allSettled([...uploadsRef.current, api.createFeedback(interview.id)]);
           navigate(`/interviews/${interview.id}/feedback`, { replace: true });
           return;
         }

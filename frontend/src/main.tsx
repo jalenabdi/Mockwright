@@ -4,6 +4,7 @@ import { createBrowserRouter, Outlet, RouterProvider } from "react-router";
 
 import "./index.css";
 import { LinkButton } from "./components/ui";
+import { API_URL } from "./lib/api";
 import { AuthProvider, RequireAuth } from "./lib/auth";
 import { usePageTitle } from "./lib/format";
 import { LogIn, SignUp } from "./pages/Auth";
@@ -49,6 +50,10 @@ const router = createBrowserRouter([
     ],
   },
 ]);
+
+// Wake the backend right away. Render puts idle services to sleep, and the first
+// request after that is slow, so start it while the visitor reads the page.
+fetch(`${API_URL}/health`).catch(() => {});
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
