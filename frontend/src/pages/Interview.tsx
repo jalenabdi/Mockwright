@@ -12,7 +12,6 @@ import { formatClock, useCountdown } from "../voice/useCountdown";
 import { useQuestionAudio, type SpokenLine } from "../voice/useQuestionAudio";
 import { useVoiceAnswer } from "../voice/useVoiceAnswer";
 
-const PREP_SECONDS = 60;
 const ANSWER_SECONDS = 180;
 const FOLLOW_UP_SECONDS = 120;
 const WARN_SECONDS = 30;
@@ -23,15 +22,14 @@ const MODE_KEY = "mockwright.answerMode";
 /**
  * Each question is a short conversation. It moves through these steps:
  * waiting (only if the browser needs a click first) → reading (question read aloud)
- * → prep (60s, or "I'm Ready") → answering (up to 3 minutes, recorded)
- * → finishing (last words) → saving → then either a follow-up or the next question.
- * A follow-up is read aloud and goes straight to answering (2 minutes, no prep).
+ * → answering right away (up to 3 minutes; 2 for a follow-up) → finishing (last words)
+ * → saving → then either a follow-up or the next question.
  * One video covers a whole question as a conversation: it starts when the question
- * is read aloud, pauses during prep, and runs through every follow-up. It records
- * the interviewer's voice as well as the candidate's.
+ * is read aloud and runs through every follow-up. It records the interviewer's
+ * voice as well as the candidate's.
  * An empty answer goes to "empty" instead of saving; a failed save to "save_failed".
  */
-type Phase = "waiting" | "reading" | "prep" | "answering" | "finishing" | "saving" | "empty" | "save_failed";
+type Phase = "waiting" | "reading" | "answering" | "finishing" | "saving" | "empty" | "save_failed";
 
 function readMode(): Mode {
   try {
@@ -261,7 +259,7 @@ export default function Interview() {
   }, [question]);
 
   const startAnswering = useCallback(() => {
-    if (!["reading", "prep", "empty"].includes(phaseRef.current)) return;
+    if (!["reading", "empty"].includes(phaseRef.current)) return;
     audio.stop();
     setSaveError(null);
     setPhase("answering");
@@ -270,7 +268,7 @@ export default function Interview() {
     if (mode === "voice") void voice.start();
   }, [audio, camera, mode, voice]);
 
-  /** Read the current line aloud, then prep for a question or answer a follow-up right away. */
+  /** Read the current line aloud, then start answering right away. */
   const beginTurn = useCallback(async () => {
     const line = currentLine();
     if (!line) return;
@@ -281,15 +279,8 @@ export default function Interview() {
     camera.startClip();
     await audio.play(line);
     if (run !== runRef.current || phaseRef.current !== "reading") return;
-    if (line.followUpId) startAnswering();
-    else setPhase("prep");
+    startAnswering();
   }, [audio, camera, currentLine, startAnswering]);
-
-  // Prep time is silent thinking: leave it out of the video.
-  const pauseClip = camera.pauseClip;
-  useEffect(() => {
-    if (phase === "prep") pauseClip();
-  }, [phase, pauseClip]);
 
   // Start each new question or follow-up once it's loaded (after a click if the browser needs one).
   useEffect(() => {
@@ -306,7 +297,6 @@ export default function Interview() {
     voice.stop();
   }, [voice]);
 
-  const prepLeft = useCountdown(PREP_SECONDS, phase === "prep", question?.id, startAnswering);
   const answerLeft = useCountdown(
     followUp ? FOLLOW_UP_SECONDS : ANSWER_SECONDS,
     phase === "answering",
@@ -496,9 +486,7 @@ export default function Interview() {
             <p className="mt-3 text-center text-[13px] text-faint">
               {camera.recording
                 ? `Recording question ${question.question_order}.`
-                : camera.paused
-                  ? "Recording paused while you prepare."
-                  : "Recording starts when the question is asked."}
+                : "Recording starts when the question is asked."}
             </p>
           )}
         </aside>
@@ -512,7 +500,7 @@ export default function Interview() {
                 <p className="text-[17px] text-fg/90">
                   {followUp
                     ? "Ready when you are. The follow-up will be read aloud, then you answer right away."
-                    : "Ready when you are. The question will be read aloud, then you get 60 seconds to prepare."}
+                    : "Ready when you are. The question will be read aloud, then you answer right away."}
                 </p>
                 <Button size="lg" onClick={() => void beginTurn()}>
                   {followUp ? "Hear the Follow-up" : `Start Question ${question.question_order}`}
@@ -525,34 +513,9 @@ export default function Interview() {
                 <p className="flex items-center gap-2.5 text-[17px] text-fg/90" role="status">
                   <Icon.Speaker className="size-5 text-muted" /> {followUp ? "Listen to the follow-up…" : "Listen to the question…"}
                 </p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (followUp) startAnswering();
-                    else {
-                      audio.stop();
-                      setPhase("prep");
-                    }
-                  }}
-                  className="text-[14px] font-semibold text-accent hover:underline"
-                >
-                  {followUp ? "Skip to answering" : "Skip to prep time"}
+                <button type="button" onClick={startAnswering} className="text-[14px] font-semibold text-accent hover:underline">
+                  Skip to answering
                 </button>
-              </div>
-            )}
-
-            {phase === "prep" && (
-              <div className="flex flex-col items-center gap-6">
-                <Clock seconds={prepLeft} total={PREP_SECONDS} label="Prep time" />
-                <p className="text-center text-[16px] text-fg/90">
-                  Think through your answer.{" "}
-                  {mode === "voice"
-                    ? "Listening and recording start automatically when the timer ends."
-                    : "Your answer box opens and recording starts automatically when the timer ends."}
-                </p>
-                <Button size="lg" className="w-full" onClick={startAnswering}>
-                  I’m Ready
-                </Button>
               </div>
             )}
 
