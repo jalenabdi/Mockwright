@@ -1,9 +1,16 @@
-# backend/app/models/interview_question.py
 from __future__ import annotations
-from sqlalchemy import CheckConstraint, Integer, Text, UniqueConstraint
+
+from typing import TYPE_CHECKING
+
+from sqlalchemy import CheckConstraint, ForeignKey, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
+
+if TYPE_CHECKING:
+    from .answer import Answer
+    from .interview import Interview
+
 
 class InterviewQuestion(Base):
     __tablename__ = "interview_questions"
@@ -19,14 +26,14 @@ class InterviewQuestion(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    interview_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-    question_order: Mapped[int] = mapped_column(Integer, nullable=False)
-    question_text: Mapped[str] = mapped_column(Text, nullable=False)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    interview_id: Mapped[int] = mapped_column(
+        ForeignKey("interviews.id", ondelete="CASCADE"), index=True
+    )
+    question_order: Mapped[int]
+    question_text: Mapped[str] = mapped_column(Text)
 
-    answer: Mapped["Answer"] = relationship(
-        "Answer",
-        back_populates="question",
-        uselist=False,
-        cascade="all, delete-orphan",
+    interview: Mapped[Interview] = relationship(back_populates="questions")
+    answer: Mapped[Answer | None] = relationship(
+        back_populates="question", cascade="all, delete-orphan", passive_deletes=True
     )

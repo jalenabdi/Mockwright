@@ -1,3 +1,3 @@
-from .typed_answer import TypedAnswerInput, TypedAnswerReturn
+from .typed_answer import SubmitAnswerResponse, TypedAnswerInput, TypedAnswerReturn
 
-__all__ = ["TypedAnswerInput", "TypedAnswerReturn"]
+__all__ = ["SubmitAnswerResponse", "TypedAnswerInput", "TypedAnswerReturn"]

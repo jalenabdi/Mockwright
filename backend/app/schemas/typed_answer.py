@@ -1,26 +1,34 @@
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, Field, field_validator
+
+from .interview import QuestionOut
 
 
 class TypedAnswerInput(BaseModel):
-    """A typed answer input for a specific question in an interview."""
+    """An answer to the interview's current question (typed, or a voice transcript)."""
 
     question_id: int
-    answer_text: str
+    answer_text: str = Field(max_length=10_000)
 
     @field_validator("answer_text")
     @classmethod
     def validate_answer_text(cls, incoming_text: str) -> str:
-        """Validate that the answer text is not empty or whitespace."""
+        """Reject empty or whitespace-only answers."""
         if not incoming_text or not incoming_text.strip():
             raise ValueError("Answer text cannot be empty or whitespace.")
         return incoming_text.strip()
 
 
 class TypedAnswerReturn(BaseModel):
-    """The saved answer record returned after a typed answer is created."""
-
-    model_config = ConfigDict(from_attributes=True)
+    """The saved answer record."""
 
     id: int
     question_id: int
     answer_text: str
+
+
+class SubmitAnswerResponse(BaseModel):
+    answer: TypedAnswerReturn
+    status: str
+    answered_count: int
+    total_questions: int
+    next_question: QuestionOut | None
