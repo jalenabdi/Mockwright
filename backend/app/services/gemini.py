@@ -11,7 +11,16 @@ from google.genai import types
 
 from ..config import get_settings
 
-REQUEST_TIMEOUT_MS = 30_000
+REQUEST_TIMEOUT_MS = 15_000
+
+# Gemini often returns 503 (high demand) or 504 (deadline) for a moment, then
+# recovers. One quick retry rides that out before callers fall back.
+RETRY_OPTIONS = types.HttpRetryOptions(
+    attempts=2,
+    initial_delay=0.5,
+    max_delay=2.0,
+    http_status_codes=[429, 500, 503, 504],
+)
 
 
 class GeminiUnavailableError(RuntimeError):
@@ -25,5 +34,5 @@ def get_gemini_client() -> genai.Client:
         raise GeminiUnavailableError("GEMINI_API_KEY is not set.")
     return genai.Client(
         api_key=api_key,
-        http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_MS),
+        http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_MS, retry_options=RETRY_OPTIONS),
     )
