@@ -34,6 +34,8 @@ class StartInterviewRequest(BaseModel):
     target_role: str = Field(min_length=1, max_length=100)
     experience_level: ExperienceLevel
     job_description: str | None = Field(default=None, max_length=5000)
+    # Base the questions on the resume saved to the account.
+    use_resume: bool = False
 
 
 class QuestionOut(BaseModel):
@@ -79,6 +81,7 @@ class InterviewSummary(BaseModel):
 
 class InterviewDetail(InterviewSummary):
     job_description: str | None
+    used_resume: bool = False
     current_question_position: int
     current_question: QuestionOut | None
     # The follow-up waiting for an answer on the current question, if any.

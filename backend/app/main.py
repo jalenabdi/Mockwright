@@ -6,6 +6,7 @@ from .routers.auth import router as auth_router
 from .routers.feedback import router as feedback_router
 from .routers.interviews import router as interviews_router
 from .routers.recordings import router as recordings_router
+from .routers.resume import router as resume_router
 from .routers.voice import router as voice_router
 
 app = FastAPI(
@@ -25,6 +26,7 @@ app.include_router(auth_router)
 app.include_router(interviews_router)
 app.include_router(feedback_router)
 app.include_router(recordings_router)
+app.include_router(resume_router)
 app.include_router(voice_router)
 
 

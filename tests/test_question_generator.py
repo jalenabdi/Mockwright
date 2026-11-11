@@ -164,3 +164,47 @@ def test_gemini_generator_skips_the_call_when_the_interview_is_over():
     generator = GeminiQuestionGenerator(client=SimpleNamespace(models=models), model="test-model")
     assert generator.next_step(CONTEXT, ANSWERED, can_follow_up=False, is_last=True) == NextStep()
     assert models.requests == []
+
+
+# --- Hedging stalled calls --------------------------------------------------
+
+import threading  # noqa: E402
+import time  # noqa: E402
+
+
+class StallOnceModels:
+    """The first call hangs (like a stalled Gemini request); later calls answer at once."""
+
+    def __init__(self):
+        self.calls = 0
+        self.release = threading.Event()
+        self.lock = threading.Lock()
+
+    def generate_content(self, *, model, contents, config):
+        with self.lock:
+            self.calls += 1
+            number = self.calls
+        if number == 1:
+            self.release.wait(5)
+            return SimpleNamespace(parsed=SimpleNamespace(question="Too late."), text=None)
+        return SimpleNamespace(parsed=SimpleNamespace(question="The hedged question?"), text=None)
+
+
+def test_a_stalled_gemini_call_is_hedged_with_a_second_one():
+    models = StallOnceModels()
+    generator = GeminiQuestionGenerator(client=SimpleNamespace(models=models), model="m", hedge_after=0.05)
+    started = time.perf_counter()
+
+    question = generator.next_question(CONTEXT, [])
+
+    models.release.set()
+    assert question == "The hedged question?"
+    assert models.calls == 2
+    assert time.perf_counter() - started < 2
+
+
+def test_a_fast_gemini_call_is_not_hedged():
+    models = FakeGeminiModels("Quick question?")
+    generator = GeminiQuestionGenerator(client=SimpleNamespace(models=models), model="m", hedge_after=1)
+    assert generator.next_question(CONTEXT, []) == "Quick question?"
+    assert len(models.requests) == 1

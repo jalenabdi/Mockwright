@@ -27,6 +27,9 @@ class Interview(Base):
     target_role: Mapped[str] = mapped_column(String(100))
     experience_level: Mapped[str] = mapped_column(String(20))
     job_description: Mapped[str | None] = mapped_column(Text)
+    # A copy of the resume the questions are based on, taken when the interview
+    # starts, so later uploads don't change an interview in progress.
+    resume_text: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(20), default=STATUS_IN_PROGRESS)
     # 1-based order of the question being answered; total + 1 once completed.
     current_question_position: Mapped[int] = mapped_column(default=1)
