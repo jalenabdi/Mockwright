@@ -68,7 +68,7 @@ def get_settings() -> Settings:
         secret_key=secret_key,
         access_token_expire_minutes=_int("ACCESS_TOKEN_EXPIRE_MINUTES", 1440),
         gemini_api_key=os.environ.get("GEMINI_API_KEY", "").strip(),
-        gemini_model=os.environ.get("GEMINI_MODEL", "gemini-2.5-flash").strip(),
+        gemini_model=os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite").strip(),
         deepgram_api_key=os.environ.get("DEEPGRAM_API_KEY", "").strip(),
         deepgram_stt_model=os.environ.get("DEEPGRAM_STT_MODEL", "nova-3").strip(),
         deepgram_tts_model=os.environ.get("DEEPGRAM_TTS_MODEL", "aura-2-thalia-en").strip(),

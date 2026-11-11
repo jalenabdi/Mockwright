@@ -258,7 +258,7 @@ DATABASE_URL=                # blank = local SQLite file (mockwright.db); or a p
 SECRET_KEY=                  # python -c "import secrets; print(secrets.token_urlsafe(48))"
 ACCESS_TOKEN_EXPIRE_MINUTES=1440
 GEMINI_API_KEY=              # writes the adaptive questions and scores feedback
-GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL=gemini-3.1-flash-lite
 DEEPGRAM_API_KEY=            # live transcription and spoken questions
 DEEPGRAM_STT_MODEL=nova-3
 DEEPGRAM_TTS_MODEL=aura-2-thalia-en
