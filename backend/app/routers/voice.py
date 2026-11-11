@@ -4,15 +4,16 @@ import logging
 
 from fastapi import APIRouter, HTTPException, WebSocket
 from sqlalchemy import select
-from starlette.websockets import WebSocketState
+from sqlalchemy.exc import SQLAlchemyError
+from starlette.websockets import WebSocketDisconnect, WebSocketState
+from websockets.exceptions import WebSocketException
 
 from ..database import SessionLocal
 from ..dependencies import get_current_user
 from ..models import Interview, InterviewQuestion
 
-#####   BELOW IMPORTS SHOULD BE REPLACED WITH THE ACTUAL DEEPGRAM/INTERVIEW METHODS WHEN AVAILABLE    #####
-from ..services.deepgram_service import DeepgramError, open_voice_session  # The Deepgram service methods
-from ..services.voice_events import handle_voice_event                      # Need to know when interview ends
+from ..services.deepgram import DeepgramError, open_voice_session
+from ..services.voice_events import handle_voice_event
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -27,6 +28,15 @@ async def _close(websocket: WebSocket, code: int = 1000) -> None:
             await websocket.close(code=code)
         except RuntimeError:
             pass
+
+
+async def _fail(websocket: WebSocket, detail: str) -> None:
+    if websocket.application_state == WebSocketState.CONNECTED:
+        try:
+            await websocket.send_json({"type": "error", "detail": detail})
+        except RuntimeError:
+            pass
+    await _close(websocket, 1011)
 
 
 async def _client_to_deepgram(websocket: WebSocket, dg) -> None:
@@ -44,6 +54,9 @@ async def _client_to_deepgram(websocket: WebSocket, dg) -> None:
             try:
                 data = json.loads(message["text"])
             except ValueError:
+                await websocket.send_json(
+                    {"type": "error", "detail": "Expected a JSON control message."}
+                )
                 continue
             if isinstance(data, dict) and data.get("type") == "stop":
                 return
@@ -68,36 +81,53 @@ async def interview_voice(websocket: WebSocket, interview_id: int):
     # 1. First message must be {"token": "<jwt>"}
     try:
         raw_message = await asyncio.wait_for(websocket.receive_text(), AUTH_TIMEOUT_SECONDS)
-        token = json.loads(raw_message).get("token")
+        auth_message = json.loads(raw_message)
+        if not isinstance(auth_message, dict):
+            raise ValueError("authentication message must be a JSON object")
+        token = auth_message.get("token")
         if not isinstance(token, str) or not token:
             raise ValueError("missing token")
-    except Exception as exc:
+    except (TimeoutError, WebSocketDisconnect, ValueError) as exc:
         logger.warning("Bad voice auth message for interview %s: %s", interview_id, type(exc).__name__)
         await _close(websocket, 4401)
         return
 
     # 2. Verify token, ownership and status with a short-lived DB session
-    with SessionLocal() as db:
-        try:
-            user = get_current_user(token=token, db=db)
-        except HTTPException:
-            await _close(websocket, 4401)
-            return
+    try:
+        with SessionLocal() as db:
+            try:
+                user = get_current_user(token=token, db=db)
+            except HTTPException:
+                await _close(websocket, 4401)
+                return
 
-        interview = db.get(Interview, interview_id)
-        if interview is None or interview.user_id != user.id:
-            await _close(websocket, 4404)   # same code for "missing" and "not yours"
-            return
-        if interview.status != "in_progress":
-            await _close(websocket, 4409)
-            return
+            interview = db.get(Interview, interview_id)
+            if interview is None or interview.user_id != user.id:
+                await _close(websocket, 4404)
+                return
+            if interview.status != "in_progress":
+                await _close(websocket, 4409)
+                return
 
-        questions = list(db.scalars(
-            select(InterviewQuestion.question_text)
-            .where(InterviewQuestion.interview_id == interview_id)
-            .order_by(InterviewQuestion.question_order)
-        ))
-        user_id = user.id
+            questions = list(db.scalars(
+                select(InterviewQuestion.question_text)
+                .where(InterviewQuestion.interview_id == interview_id)
+                .order_by(InterviewQuestion.question_order)
+            ))
+            user_id = user.id
+    except SQLAlchemyError:
+        logger.exception("Could not load interview %s for voice session", interview_id)
+        await _fail(websocket, "Could not load this interview. Please try again.")
+        return
+
+    if len(questions) != 5:
+        logger.error(
+            "Interview %s has %s questions; voice interviews require exactly five",
+            interview_id,
+            len(questions),
+        )
+        await _fail(websocket, "This interview does not have the five required questions.")
+        return
 
     # 3. Connect to Deepgram and relay both directions
     try:
@@ -117,13 +147,22 @@ async def interview_voice(websocket: WebSocket, interview_id: int):
             await asyncio.gather(*pending, return_exceptions=True)
             # Check for exceptions in the completed tasks
             for task in done:
-                if task.exception():
-                    raise task.exception()
+                error = task.exception()
+                if error is not None:
+                    raise error
     except DeepgramError:
         logger.warning("Deepgram session failed for interview %s", interview_id)
-        await _close(websocket, 1011)
+        await _fail(websocket, "The voice service is unavailable. Please try again.")
         return
-    except Exception as exc:
-        logger.info("Voice session ended for interview %s: %s", interview_id, type(exc).__name__)
+    except WebSocketDisconnect:
+        pass
+    except (SQLAlchemyError, OSError, RuntimeError, TimeoutError, WebSocketException) as exc:
+        logger.exception(
+            "Voice session failed for interview %s: %s",
+            interview_id,
+            type(exc).__name__,
+        )
+        await _fail(websocket, "The voice session encountered an error. Please reconnect.")
+        return
 
     await _close(websocket, 1000)

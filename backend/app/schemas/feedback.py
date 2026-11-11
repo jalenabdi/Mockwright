@@ -2,22 +2,69 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class FeedbackReport(BaseModel):
-    """Schema returned from the AI feedback generator for a completed interview."""
+    """Feedback for a completed interview.
 
-    model_config = ConfigDict(from_attributes=True)
+    Each category is scored from 0 to 20: 0-4 is absent or very weak, 5-9 is
+    limited, 10-14 is mixed, 15-17 is strong, and 18-20 is exceptional.
+    The total is the sum of the five category scores.
+    """
 
-    relevance_score: int = Field(ge=0, le=20)
-    star_structure_score: int = Field(ge=0, le=20)
-    specificity_score: int = Field(ge=0, le=20)
-    individual_contribution_score: int = Field(ge=0, le=20)
-    communication_score: int = Field(ge=0, le=20)
-    total_score: int = Field(ge=0, le=100)
-    strengths: list[str]
-    improvements: list[str]
-    next_step: str
+    model_config = ConfigDict(from_attributes=True, str_strip_whitespace=True)
+
+    relevance_score: int = Field(
+        ge=0,
+        le=20,
+        description="How directly and completely the answer addresses the question.",
+    )
+    star_structure_score: int = Field(
+        ge=0,
+        le=20,
+        description=(
+            "How clearly the answer establishes the Situation and Task, explains "
+            "the Action, and states the Result."
+        ),
+    )
+    specificity_score: int = Field(
+        ge=0,
+        le=20,
+        description=(
+            "How much concrete context, examples, decisions, or outcomes support "
+            "the answer; metrics help but are not required."
+        ),
+    )
+    individual_contribution_score: int = Field(
+        ge=0,
+        le=20,
+        description=(
+            "How clearly the candidate identifies their own actions and impact, "
+            "rather than attributing work only to a team."
+        ),
+    )
+    communication_score: int = Field(
+        ge=0,
+        le=20,
+        description="How clearly, logically, and concisely the answer is communicated.",
+    )
+    total_score: int = Field(
+        ge=0,
+        le=100,
+        description="The sum of the five category scores.",
+    )
+    strengths: list[str] = Field(
+        max_length=3,
+        description="Up to three specific strengths supported by the candidate's answers.",
+    )
+    improvements: list[str] = Field(
+        max_length=3,
+        description="Up to three specific, actionable areas for improvement.",
+    )
+    next_step: str = Field(
+        min_length=1,
+        description="One concise, actionable recommendation for continued practice.",
+    )
 
     @model_validator(mode="after")
-    def validate_total(self):
+    def validate_total(self) -> "FeedbackReport":
         expected_total = (
             self.relevance_score
             + self.star_structure_score

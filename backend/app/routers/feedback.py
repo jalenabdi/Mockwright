@@ -77,7 +77,7 @@ def create_feedback(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Could not generate feedback right now. Please try again.",
-        )
+        ) from None
 
     # 4. Save the report. There can be only one report per interview.
     try:
@@ -91,17 +91,21 @@ def create_feedback(
             response.status_code = status.HTTP_200_OK
             return existing
         # Otherwise the generated report broke a database rule (for example a score range).
-        logger.warning("Generated feedback rejected by the database for interview %s", interview.id)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Could not generate feedback right now. Please try again.",
+        logger.exception(
+            "Database rejected feedback for interview %s",
+            interview.id,
         )
-    except SQLAlchemyError:
-        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Could not save the feedback.",
-        )
+            detail="Could not save feedback. Please try again.",
+        ) from None
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("Could not save feedback for interview %s", interview.id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not save feedback. Please try again.",
+        ) from None
 
     return report
 

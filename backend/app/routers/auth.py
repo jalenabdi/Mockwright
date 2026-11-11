@@ -1,15 +1,6 @@
-"""POST /auth/token: verify a user's password and issue a signed JWT.
+"""Authenticate users and issue signed access tokens."""
 
-Week 4 scope is login/token issuance only. Registration (Alex) and the
-get_current_user dependency (Marcial) are built on top of this.
-
-Assumed User contract (the User model is not merged yet):
-    from backend.app.models.user import User
-    User.id              : primary key, used as the JWT "sub" (as str)
-    User.email           : str, unique
-    User.hashed_password : str, a pwdlib/Argon2 hash
-"""
-
+import re
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -41,6 +32,16 @@ def login_for_access_token(
     time doesn't reveal whether the email is registered.
     """
     email = form_data.username.strip().lower()
+    if (
+        len(email) > 254
+        or re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email) is None
+        or not form_data.password
+        or len(form_data.password) > 128
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Provide a valid email address and a password of at most 128 characters.",
+        )
 
     user = db.scalar(select(User).where(User.email == email))
 

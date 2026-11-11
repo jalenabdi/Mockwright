@@ -1,11 +1,11 @@
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class TypedAnswerInput(BaseModel):
     """A typed answer input for a specific question in an interview."""
 
-    question_id: int
-    answer_text: str
+    question_id: int = Field(strict=True, gt=0)
+    answer_text: str = Field(max_length=10000)
 
     @field_validator("answer_text")
     @classmethod
