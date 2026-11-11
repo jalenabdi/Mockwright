@@ -16,6 +16,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(REPO_ROOT / ".env")
 
 # Local SQLite file by default; set DATABASE_URL to use Postgres instead.
+PLACEHOLDER_SECRETS = {"change-me", "your_jwt_secret"}
+
 DEFAULT_DATABASE_URL = f"sqlite:///{(REPO_ROOT / 'mockwright.db').as_posix()}"
 
 
@@ -51,10 +53,11 @@ class Settings:
 
 @lru_cache
 def get_settings() -> Settings:
-    secret_key = os.environ.get("SECRET_KEY", "")
-    if not secret_key:
+    secret_key = os.environ.get("SECRET_KEY", "").strip()
+    if not secret_key or secret_key in PLACEHOLDER_SECRETS:
         raise RuntimeError(
-            "SECRET_KEY is not set. Copy .env.example to .env and fill it in."
+            "SECRET_KEY is missing or still the placeholder. Generate one with: "
+            'python -c "import secrets; print(secrets.token_urlsafe(48))"'
         )
     origins = os.environ.get("CORS_ORIGINS", "http://localhost:5173")
     return Settings(
