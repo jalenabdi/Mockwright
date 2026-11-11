@@ -52,14 +52,28 @@ def client(session_factory):
 
 
 class RecordingQuestionGenerator:
-    """Writes predictable questions and records what it was shown."""
+    """Writes predictable questions and records what it was shown.
+
+    Put texts in `follow_ups` to have them asked, one per answer, whenever a
+    follow-up is allowed. By default it never follows up.
+    """
 
     def __init__(self):
         self.calls = []
+        self.step_calls = []
+        self.follow_ups: list[str] = []
 
     def next_question(self, context, history):
         self.calls.append((context, list(history)))
         return f"Question {len(history) + 1} for {context.target_role}?"
+
+    def next_step(self, context, history, *, can_follow_up, is_last):
+        from backend.app.services.question_generator import NextStep
+
+        self.step_calls.append({"history": list(history), "can_follow_up": can_follow_up, "is_last": is_last})
+        if can_follow_up and self.follow_ups:
+            return NextStep(follow_up=self.follow_ups.pop(0))
+        return NextStep(next_question=None if is_last else self.next_question(context, history))
 
 
 @pytest.fixture

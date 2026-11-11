@@ -21,14 +21,15 @@ import json
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, WebSocket, status
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from ..database import get_db
 from ..dependencies import DbSession, OwnedInterview, find_owned_interview, user_from_token
-from ..models import STATUS_IN_PROGRESS, InterviewQuestion
+from ..models import STATUS_IN_PROGRESS, FollowUp, InterviewQuestion
 from ..services.deepgram import (
     SpeechService,
     SpeechServiceError,
@@ -174,18 +175,21 @@ async def _send_error(websocket: WebSocket, code: str, message: str) -> None:
             await websocket.send_json({"type": "error", "code": code, "message": message})
 
 
+_SPEECH_RESPONSES: dict[int | str, dict[str, object]] = {200: {"content": {"audio/mpeg": {}}}}
+
+
 @router.post(
     "/{interview_id}/questions/{question_id}/speech",
-    response_class=Response,
-    responses={200: {"content": {"audio/mpeg": {}}}},
+    response_class=StreamingResponse,
+    responses=_SPEECH_RESPONSES,
 )
 async def question_speech(
     question_id: int,
     interview: OwnedInterview,
     db: DbSession,
     speech: Speech,
-) -> Response:
-    """Read one of the interview's questions aloud (MP3 from Deepgram Aura)."""
+) -> StreamingResponse:
+    """Read one of the interview's questions aloud (MP3 from Deepgram Aura, streamed)."""
     question_text = db.scalar(
         select(InterviewQuestion.question_text).where(
             InterviewQuestion.id == question_id,
@@ -194,9 +198,35 @@ async def question_speech(
     )
     if question_text is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Question not found.")
+    return await _spoken(question_text, speech)
 
+
+@router.post(
+    "/{interview_id}/follow-ups/{follow_up_id}/speech",
+    response_class=StreamingResponse,
+    responses=_SPEECH_RESPONSES,
+)
+async def follow_up_speech(
+    follow_up_id: int,
+    interview: OwnedInterview,
+    db: DbSession,
+    speech: Speech,
+) -> StreamingResponse:
+    """Read one of the interviewer's follow-ups aloud."""
+    follow_up_text = db.scalar(
+        select(FollowUp.question_text)
+        .join(InterviewQuestion, FollowUp.interview_question_id == InterviewQuestion.id)
+        .where(FollowUp.id == follow_up_id, InterviewQuestion.interview_id == interview.id)
+    )
+    if follow_up_text is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Follow-up not found.")
+    return await _spoken(follow_up_text, speech)
+
+
+async def _spoken(text: str, speech: SpeechService) -> StreamingResponse:
+    """Stream the audio, so the browser can start playing before it all arrives."""
     try:
-        audio = await speech.speak(question_text)
+        audio = await speech.open_speech(text)
     except SpeechUnavailableError:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -208,4 +238,4 @@ async def question_speech(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Could not read the question aloud right now.",
         )
-    return Response(content=audio, media_type="audio/mpeg", headers={"Cache-Control": "private, max-age=3600"})
+    return StreamingResponse(audio, media_type="audio/mpeg", headers={"Cache-Control": "private, max-age=3600"})
