@@ -44,9 +44,20 @@ class QuestionOut(BaseModel):
     question_text: str
 
 
+class FollowUpOut(BaseModel):
+    """A follow-up the interviewer asked about a main question's answer."""
+
+    id: int
+    question_id: int
+    position: int
+    question_text: str
+    answer_text: str | None = None
+
+
 class QuestionWithAnswer(QuestionOut):
     answer_text: str | None = None
     has_recording: bool = False
+    follow_ups: list[FollowUpOut] = Field(default_factory=list)
 
 
 class InterviewSummary(BaseModel):
@@ -70,6 +81,8 @@ class InterviewDetail(InterviewSummary):
     job_description: str | None
     current_question_position: int
     current_question: QuestionOut | None
+    # The follow-up waiting for an answer on the current question, if any.
+    current_follow_up: FollowUpOut | None = None
     questions: list[QuestionWithAnswer]
     feedback: FeedbackReport | None = None
 
@@ -80,3 +93,5 @@ class CurrentQuestionResponse(BaseModel):
     total_questions: int
     status: str
     question: QuestionOut
+    # Set when the candidate should answer this follow-up on `question` next.
+    follow_up: FollowUpOut | None = None

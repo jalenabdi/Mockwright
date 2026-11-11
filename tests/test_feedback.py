@@ -214,3 +214,32 @@ def test_gemini_feedback_rejects_incomplete_or_invalid_question_grades(grades):
     generator = GeminiFeedbackGenerator(client=SimpleNamespace(models=models), model="m")
     with pytest.raises(FeedbackGenerationError):
         generator.generate(CONTEXT, TWO_TURNS)
+
+
+def test_feedback_scores_each_question_with_its_follow_ups(
+    client, auth_headers, start_interview, answer_current, question_generator, feedback_generator
+):
+    interview = start_interview()
+    question_generator.follow_ups = ["What was the result?"]
+    interview, body = answer_current(interview, text="We rebuilt the importer.")
+    client.post(
+        f"/interviews/{interview['id']}/answers",
+        json={"question_id": body["answer"]["question_id"], "follow_up_id": body["follow_up"]["id"], "answer_text": "Imports got 3x faster."},
+        headers=auth_headers,
+    )
+    interview = client.get(f"/interviews/{interview['id']}", headers=auth_headers).json()
+    for n in range(2, 6):
+        interview, _ = answer_current(interview, text=f"Answer number {n}")
+
+    assert client.post(f"/interviews/{interview['id']}/feedback", headers=auth_headers).status_code == 201
+    turns = feedback_generator.calls[0][1]
+    assert len(turns) == 5
+    assert turns[0].follow_ups == (Turn(question="What was the result?", answer="Imports got 3x faster."),)
+
+
+def test_gemini_feedback_prompt_includes_follow_ups():
+    from backend.app.services.gemini_feedback import build_prompt
+
+    turn = Turn(question="Q?", answer="A.", follow_ups=(Turn(question="Why?", answer="Because."),))
+    prompt = build_prompt(CONTEXT, [turn])
+    assert '"interviewer_follow_up": "Why?"' in prompt and '"candidate_answer": "Because."' in prompt

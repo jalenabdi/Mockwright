@@ -1,4 +1,4 @@
-"""Interview endpoints: start, history, detail, current question and answers."""
+"""Interview endpoints: start, history, detail, current turn and answers."""
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -6,10 +6,11 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from ..dependencies import CurrentUser, DbSession, OwnedInterview
-from ..models import Answer, Feedback, Interview, InterviewQuestion
+from ..models import Answer, Feedback, FollowUp, Interview, InterviewQuestion
 from ..schemas.feedback import FeedbackReport
 from ..schemas.interview import (
     CurrentQuestionResponse,
+    FollowUpOut,
     InterviewDetail,
     InterviewSummary,
     QuestionOut,
@@ -54,6 +55,16 @@ _ERRORS: dict[type[InterviewServiceError], tuple[int, str]] = {
 }
 
 
+def _follow_up_out(follow_up: FollowUp) -> FollowUpOut:
+    return FollowUpOut(
+        id=follow_up.id,
+        question_id=follow_up.interview_question_id,
+        position=follow_up.position,
+        question_text=follow_up.question_text,
+        answer_text=follow_up.answer_text,
+    )
+
+
 def _load_detail(db: Session, interview_id: int) -> InterviewDetail:
     interview = db.scalar(
         select(Interview)
@@ -61,6 +72,7 @@ def _load_detail(db: Session, interview_id: int) -> InterviewDetail:
         .options(
             selectinload(Interview.questions).selectinload(InterviewQuestion.answer),
             selectinload(Interview.questions).selectinload(InterviewQuestion.recording),
+            selectinload(Interview.questions).selectinload(InterviewQuestion.follow_ups),
             selectinload(Interview.feedback),
         )
         .execution_options(populate_existing=True)
@@ -73,12 +85,16 @@ def _load_detail(db: Session, interview_id: int) -> InterviewDetail:
             question_text=q.question_text,
             answer_text=q.answer.answer_text if q.answer else None,
             has_recording=q.recording is not None,
+            follow_ups=[_follow_up_out(f) for f in q.follow_ups],
         )
         for q in interview.questions
     ]
     current = next(
         (q for q in interview.questions if q.question_order == interview.current_question_position),
         None,
+    )
+    open_follow_up = next(
+        (f for f in (current.follow_ups if current else []) if f.answer_text is None), None
     )
     feedback = (
         FeedbackReport.model_validate(interview.feedback) if interview.feedback else None
@@ -95,6 +111,7 @@ def _load_detail(db: Session, interview_id: int) -> InterviewDetail:
         created_at=interview.created_at,
         total_score=feedback.total_score if feedback else None,
         current_question=QuestionOut.model_validate(current) if current else None,
+        current_follow_up=_follow_up_out(open_follow_up) if open_follow_up else None,
         questions=questions,
         feedback=feedback,
     )
@@ -172,9 +189,9 @@ def delete_interview(interview: OwnedInterview, db: DbSession, store: Store) -> 
 def get_current_question(
     interview: OwnedInterview, db: DbSession, generator: Generator
 ) -> CurrentQuestionResponse:
-    """The question to answer next. Writes it first if it doesn't exist yet."""
-    question = interview_service.ensure_current_question(db, interview, generator)
-    if question is None:
+    """What to answer next: a question, or a follow-up on it. Decides it first if needed."""
+    turn = interview_service.current_turn(db, interview, generator)
+    if turn is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="This interview has already been completed.",
@@ -184,7 +201,8 @@ def get_current_question(
         current_position=interview.current_question_position,
         total_questions=TOTAL_QUESTIONS,
         status=interview.status,
-        question=QuestionOut.model_validate(question),
+        question=QuestionOut.model_validate(turn.question),
+        follow_up=_follow_up_out(turn.follow_up) if turn.follow_up else None,
     )
 
 
@@ -199,25 +217,40 @@ def submit_answer(
     db: DbSession,
     generator: Generator,
 ) -> SubmitAnswerResponse:
-    """Save an answer (typed or a voice transcript) and get the next question."""
+    """Save an answer (typed or a voice transcript) and get what comes next.
+
+    That is a follow-up on the same question, the next question, or neither
+    once the interview is completed.
+    """
     try:
-        result = interview_service.save_answer(
-            db, interview.id, payload.question_id, payload.answer_text
-        )
+        if payload.follow_up_id is None:
+            answer = interview_service.save_answer(
+                db, interview.id, payload.question_id, payload.answer_text
+            )
+            saved = TypedAnswerReturn(
+                id=answer.id, question_id=answer.interview_question_id, answer_text=answer.answer_text
+            )
+        else:
+            follow_up = interview_service.save_follow_up_answer(
+                db, interview.id, payload.question_id, payload.follow_up_id, payload.answer_text
+            )
+            saved = TypedAnswerReturn(
+                id=follow_up.id,
+                question_id=follow_up.interview_question_id,
+                answer_text=follow_up.answer_text or "",
+            )
     except InterviewServiceError as error:
         code, detail = _ERRORS.get(type(error), (status.HTTP_400_BAD_REQUEST, "Could not save the answer."))
         raise HTTPException(status_code=code, detail=detail)
 
-    db.refresh(interview)
-    next_question = interview_service.ensure_current_question(db, interview, generator)
+    turn = interview_service.current_turn(db, interview, generator)
     return SubmitAnswerResponse(
-        answer=TypedAnswerReturn(
-            id=result.answer.id,
-            question_id=result.answer.interview_question_id,
-            answer_text=result.answer.answer_text,
+        answer=saved,
+        status=interview.status,
+        answered_count=interview_service.answered_count(db, interview.id),
+        total_questions=TOTAL_QUESTIONS,
+        follow_up=_follow_up_out(turn.follow_up) if turn and turn.follow_up else None,
+        next_question=(
+            QuestionOut.model_validate(turn.question) if turn and turn.follow_up is None else None
         ),
-        status=result.status,
-        answered_count=result.answered_count,
-        total_questions=result.total_questions,
-        next_question=QuestionOut.model_validate(next_question) if next_question else None,
     )

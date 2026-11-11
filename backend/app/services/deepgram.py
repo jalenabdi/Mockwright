@@ -22,6 +22,7 @@ from typing import Any, Protocol
 from urllib.parse import urlencode
 
 import httpx
+from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed, WebSocketException
 
@@ -52,7 +53,30 @@ class TranscriptionStream(Protocol):
 
 class SpeechService(Protocol):
     def transcription(self) -> AbstractAsyncContextManager[TranscriptionStream]: ...
-    async def speak(self, text: str) -> bytes: ...
+
+    async def open_speech(self, text: str) -> AsyncIterator[bytes]:
+        """Start reading `text` aloud and return the MP3 as it arrives.
+
+        Raises SpeechServiceError before returning if Deepgram refuses, so
+        callers can still answer with an error status.
+        """
+        ...
+
+
+_http_client: httpx.Client | None = None
+
+
+def _speech_client() -> httpx.Client:
+    """One shared client, so each spoken line reuses an open connection to Deepgram.
+
+    It is the sync client, run on worker threads: in testing, httpx's async
+    client held Deepgram's streamed audio back for 2-3 s, while the sync
+    client hands over the first audio in about 0.2 s.
+    """
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.Client(timeout=httpx.Timeout(20, connect=5))
+    return _http_client
 
 
 def to_event(message: dict[str, Any]) -> dict[str, Any] | None:
@@ -165,21 +189,34 @@ class DeepgramSpeechService:
             with contextlib.suppress(Exception):
                 await connection.close()
 
-    async def speak(self, text: str) -> bytes:
+    async def open_speech(self, text: str) -> AsyncIterator[bytes]:
         api_key = self._require_key()
+        client = _speech_client()
+        request = client.build_request(
+            "POST",
+            SPEAK_URL,
+            params={"model": self._tts_model, "encoding": "mp3"},
+            headers={"Authorization": f"Token {api_key}"},
+            json={"text": text[:MAX_SPEECH_CHARS]},
+        )
         try:
-            async with httpx.AsyncClient(timeout=20) as client:
-                response = await client.post(
-                    SPEAK_URL,
-                    params={"model": self._tts_model, "encoding": "mp3"},
-                    headers={"Authorization": f"Token {api_key}"},
-                    json={"text": text[:MAX_SPEECH_CHARS]},
-                )
+            response = await run_in_threadpool(client.send, request, stream=True)
         except httpx.HTTPError as error:
             raise SpeechServiceError(f"Deepgram TTS request failed: {type(error).__name__}") from error
         if response.status_code != 200:
+            response.close()
             raise SpeechServiceError(f"Deepgram TTS returned {response.status_code}.")
-        return response.content
+
+        async def audio() -> AsyncIterator[bytes]:
+            try:
+                async for chunk in iterate_in_threadpool(response.iter_bytes()):
+                    yield chunk
+            except httpx.HTTPError as error:
+                logger.warning("Deepgram TTS stream broke off: %s", type(error).__name__)
+            finally:
+                await run_in_threadpool(response.close)
+
+        return audio()
 
 
 def get_speech_service() -> SpeechService:

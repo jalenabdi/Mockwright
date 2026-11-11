@@ -4,7 +4,7 @@ import { useParams } from "react-router";
 import { AppHeader } from "../components/AppHeader";
 import { ScoreCard } from "../components/ScoreCard";
 import { Button, Icon, LinkButton, Spinner } from "../components/ui";
-import { api, ApiError, type FeedbackReport, type InterviewDetail, type QuestionGrade } from "../lib/api";
+import { api, ApiError, type FeedbackReport, type FollowUp, type InterviewDetail, type QuestionGrade } from "../lib/api";
 import { FullPageSpinner } from "../lib/auth";
 import { formatDate, levelLabel, usePageTitle } from "../lib/format";
 
@@ -67,6 +67,7 @@ function AnswerRow({
   answer,
   hasRecording,
   grade,
+  followUps,
 }: {
   interviewId: number;
   questionId: number;
@@ -75,6 +76,7 @@ function AnswerRow({
   answer: string | null;
   hasRecording: boolean;
   grade: QuestionGrade | undefined;
+  followUps: FollowUp[];
 }) {
   const [open, setOpen] = useState(false);
   const id = `answer-${order}`;
@@ -114,6 +116,13 @@ function AnswerRow({
           )}
           <p className="mb-1.5 text-[12px] font-semibold uppercase tracking-wide text-faint">Your answer</p>
           <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-fg/85">{answer ?? "No answer saved."}</p>
+          {followUps.map((f) => (
+            <div key={f.id} className="mt-5 border-l-2 border-line pl-4">
+              <p className="mb-1.5 text-[12px] font-semibold uppercase tracking-wide text-faint">Follow-up</p>
+              <p className="text-[15px] font-semibold leading-snug">{f.question_text}</p>
+              <p className="mt-2 whitespace-pre-wrap text-[15px] leading-relaxed text-fg/85">{f.answer_text ?? "No answer saved."}</p>
+            </div>
+          ))}
         </div>
       )}
     </li>
@@ -248,6 +257,7 @@ export default function Feedback() {
                 answer={q.answer_text}
                 hasRecording={q.has_recording}
                 grade={report?.question_grades?.find((g) => g.question_number === q.question_order)}
+                followUps={q.follow_ups ?? []}
               />
             ))}
           </ol>

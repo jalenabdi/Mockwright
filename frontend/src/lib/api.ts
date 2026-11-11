@@ -21,9 +21,19 @@ export interface Question {
   question_text: string;
 }
 
+/** A short follow-up the interviewer asked about a question's answer. */
+export interface FollowUp {
+  id: number;
+  question_id: number;
+  position: number;
+  question_text: string;
+  answer_text: string | null;
+}
+
 export interface QuestionWithAnswer extends Question {
   answer_text: string | null;
   has_recording: boolean;
+  follow_ups: FollowUp[];
 }
 
 export interface FeedbackReport {
@@ -61,6 +71,8 @@ export interface InterviewDetail extends InterviewSummary {
   job_description: string | null;
   current_question_position: number;
   current_question: Question | null;
+  /** The follow-up waiting for an answer on the current question, if any. */
+  current_follow_up: FollowUp | null;
   questions: QuestionWithAnswer[];
   feedback: FeedbackReport | null;
 }
@@ -70,6 +82,8 @@ export interface SubmitAnswerResponse {
   status: "in_progress" | "completed";
   answered_count: number;
   total_questions: number;
+  /** At most one is set: a follow-up on the same question, or the next question. Neither once completed. */
+  follow_up: FollowUp | null;
   next_question: Question | null;
 }
 
@@ -79,6 +93,8 @@ export interface CurrentQuestionResponse {
   total_questions: number;
   status: string;
   question: Question;
+  /** Set when the candidate should answer this follow-up on `question` next. */
+  follow_up: FollowUp | null;
 }
 
 export class ApiError extends Error {
@@ -201,9 +217,10 @@ export const api = {
   currentQuestion: (id: number) =>
     requestJson<CurrentQuestionResponse>(`/interviews/${id}/current-question`),
 
-  submitAnswer: (id: number, questionId: number, answerText: string) =>
+  /** Answer the current question, or the open follow-up on it when `followUpId` is given. */
+  submitAnswer: (id: number, questionId: number, answerText: string, followUpId?: number) =>
     requestJson<SubmitAnswerResponse>(`/interviews/${id}/answers`, {
-      json: { question_id: questionId, answer_text: answerText },
+      json: { question_id: questionId, follow_up_id: followUpId ?? null, answer_text: answerText },
     }),
 
   createFeedback: (id: number) =>
@@ -232,10 +249,15 @@ export const api = {
     return response.blob();
   },
 
-  questionSpeech: async (interviewId: number, questionId: number): Promise<Blob> => {
-    const response = await request(`/interviews/${interviewId}/questions/${questionId}/speech`, {
-      method: "POST",
-    });
-    return response.blob();
-  },
+  /**
+   * Start reading a line aloud: a question, or a follow-up when `followUpId` is given.
+   * Resolves as soon as the MP3 starts arriving, so it can play while it streams.
+   */
+  speech: (interviewId: number, line: { questionId: number; followUpId?: number }): Promise<Response> =>
+    request(
+      line.followUpId
+        ? `/interviews/${interviewId}/follow-ups/${line.followUpId}/speech`
+        : `/interviews/${interviewId}/questions/${line.questionId}/speech`,
+      { method: "POST" },
+    ),
 };

@@ -47,11 +47,16 @@ class FakeSpeechService:
         await self.stream.start()
         yield self.stream
 
-    async def speak(self, text: str) -> bytes:
+    async def open_speech(self, text: str):
         if self.error:
             raise self.error
         self.spoken.append(text)
-        return b"ID3-fake-mp3"
+
+        async def chunks():
+            for chunk in (b"ID3-", b"fake-", b"mp3"):  # arrives in pieces, like Deepgram's stream
+                yield chunk
+
+        return chunks()
 
 
 @pytest.fixture
@@ -190,3 +195,31 @@ def test_voice_session_ends_even_if_deepgram_never_closes(client, auth_headers, 
         assert ws.receive_json() == {"type": "ready"}
         ws.send_json({"type": "stop"})
         assert ws.receive_json() == {"type": "closed"}
+
+
+def test_follow_up_speech_streams_the_follow_up(client, auth_headers, start_interview, answer_current, question_generator, speech):
+    interview = start_interview()
+    question_generator.follow_ups = ["Got it. What did you measure?"]
+    _, body = answer_current(interview)
+
+    response = client.post(
+        f"/interviews/{interview['id']}/follow-ups/{body['follow_up']['id']}/speech", headers=auth_headers
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "audio/mpeg"
+    assert response.content == b"ID3-fake-mp3"
+    assert speech.spoken == ["Got it. What did you measure?"]
+
+
+def test_follow_up_speech_is_owner_scoped(
+    client, auth_headers, other_auth_headers, start_interview, answer_current, question_generator, speech
+):
+    interview = start_interview()
+    question_generator.follow_ups = ["Why?"]
+    _, body = answer_current(interview)
+    mine = start_interview(target_role="Other role")
+    url = "/interviews/{}/follow-ups/{}/speech"
+
+    assert client.post(url.format(interview["id"], body["follow_up"]["id"]), headers=other_auth_headers).status_code == 404
+    assert client.post(url.format(mine["id"], body["follow_up"]["id"]), headers=auth_headers).status_code == 404

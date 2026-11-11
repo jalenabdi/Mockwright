@@ -3,26 +3,29 @@ import { Link, useLocation, useNavigate, useParams } from "react-router";
 
 import { Button, ErrorNote, Icon, LinkButton, Logo, Spinner } from "../components/ui";
 import { LevelMeter } from "../components/Waveform";
-import { api, ApiError, type InterviewDetail, type Question } from "../lib/api";
+import { api, ApiError, type FollowUp, type InterviewDetail, type Question } from "../lib/api";
 import { FullPageSpinner } from "../lib/auth";
 import { levelLabel, usePageTitle } from "../lib/format";
 import { useCamera, type CameraStatus, type Clip } from "../voice/useCamera";
 import { formatClock, useCountdown } from "../voice/useCountdown";
-import { useQuestionAudio } from "../voice/useQuestionAudio";
+import { useQuestionAudio, type SpokenLine } from "../voice/useQuestionAudio";
 import { useVoiceAnswer } from "../voice/useVoiceAnswer";
 
 const PREP_SECONDS = 60;
 const ANSWER_SECONDS = 180;
+const FOLLOW_UP_SECONDS = 120;
 const WARN_SECONDS = 30;
 
 type Mode = "voice" | "text";
 const MODE_KEY = "mockwright.answerMode";
 
 /**
- * Each question moves through these steps:
+ * Each question is a short conversation. It moves through these steps:
  * waiting (only if the browser needs a click first) → reading (question read aloud)
  * → prep (60s, or "I'm Ready") → answering (up to 3 minutes, recorded)
- * → finishing (last words + video) → saving → next question.
+ * → finishing (last words) → saving → then either a follow-up or the next question.
+ * A follow-up is read aloud and goes straight to answering (2 minutes, no prep).
+ * One video covers a whole question, follow-ups included.
  * An empty answer goes to "empty" instead of saving; a failed save to "save_failed".
  */
 type Phase = "waiting" | "reading" | "prep" | "answering" | "finishing" | "saving" | "empty" | "save_failed";
@@ -168,7 +171,10 @@ export default function Interview() {
   const [interview, setInterview] = useState<InterviewDetail | null>(
     preloaded && preloaded.id === interviewId ? preloaded : null,
   );
-  const [question, setQuestion] = useState<Question | null>(interview?.current_question ?? null);
+  const [question, setQuestion] = useState<Question | null>(
+    interview && !interview.current_follow_up ? interview.current_question : null,
+  );
+  const [followUp, setFollowUp] = useState<FollowUp | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [mode, setModeState] = useState<Mode>(readMode);
   const [typed, setTyped] = useState("");
@@ -184,11 +190,15 @@ export default function Interview() {
   const phaseRef = useRef<Phase>("waiting");
   phaseRef.current = phase;
   const runRef = useRef(0); // bumps per question so stale async steps are ignored
-  const clipRef = useRef<Promise<Clip | null> | null>(null);
-  const pendingRef = useRef<{ text: string; clip: Clip | null } | null>(null);
+  const pendingRef = useRef<string | null>(null); // an answer whose save failed, to retry
   const uploadsRef = useRef<Promise<void>[]>([]);
-  const startedRef = useRef<number | null>(null);
+  const startedRef = useRef<string | null>(null);
   const finishHandledRef = useRef(true); // false while an answer is waiting to be saved
+  const followUpRef = useRef<FollowUp | null>(null);
+  followUpRef.current = followUp;
+
+  // What the candidate is answering right now: the question, or a follow-up on it.
+  const turnKey = followUp ? `f${followUp.id}` : question ? `q${question.id}` : null;
 
   usePageTitle(question ? `Question ${question.question_order}` : "Interview");
 
@@ -209,8 +219,11 @@ export default function Interview() {
         }
         setInterview(detail);
         if (!question) {
-          const current = detail.current_question ?? (await api.currentQuestion(interviewId)).question;
-          if (!cancelled) setQuestion(current);
+          // Ask the server: it also settles a follow-up that was still being decided.
+          const current = await api.currentQuestion(interviewId);
+          if (cancelled) return;
+          setFollowUp(current.follow_up);
+          setQuestion(current.question);
         }
       } catch (caught) {
         if (cancelled) return;
@@ -236,24 +249,13 @@ export default function Interview() {
     void startCamera();
   }, [startCamera]);
 
-  /** Read the question aloud, then start the prep countdown. */
-  const beginQuestion = useCallback(
-    async (next: Question) => {
-      const run = ++runRef.current;
-      setPhase("reading");
-      await audio.play(next.id, next.question_text);
-      if (run === runRef.current && phaseRef.current === "reading") setPhase("prep");
-    },
-    [audio],
-  );
-
-  // Start each new question once it's loaded (after a click if the browser needs one).
-  useEffect(() => {
-    if (!question || startedRef.current === question.id) return;
-    startedRef.current = question.id;
-    if (needsClickFirst()) setPhase("waiting");
-    else void beginQuestion(question);
-  }, [question, beginQuestion]);
+  const currentLine = useCallback((): SpokenLine | null => {
+    if (!question) return null;
+    const open = followUpRef.current;
+    return open
+      ? { questionId: question.id, followUpId: open.id, text: open.question_text }
+      : { questionId: question.id, text: question.question_text };
+  }, [question]);
 
   const startAnswering = useCallback(() => {
     if (!["reading", "prep", "empty"].includes(phaseRef.current)) return;
@@ -261,38 +263,76 @@ export default function Interview() {
     setSaveError(null);
     setPhase("answering");
     setAttempt((a) => a + 1);
-    camera.startClip();
+    camera.startClip(); // keeps going if this question's video is already recording
     if (mode === "voice") void voice.start();
   }, [audio, camera, mode, voice]);
+
+  /** Read the current line aloud, then prep for a question or answer a follow-up right away. */
+  const beginTurn = useCallback(async () => {
+    const line = currentLine();
+    if (!line) return;
+    const run = ++runRef.current;
+    setPhase("reading");
+    await audio.play(line);
+    if (run !== runRef.current || phaseRef.current !== "reading") return;
+    if (line.followUpId) startAnswering();
+    else setPhase("prep");
+  }, [audio, currentLine, startAnswering]);
+
+  // Start each new question or follow-up once it's loaded (after a click if the browser needs one).
+  useEffect(() => {
+    if (!turnKey || startedRef.current === turnKey) return;
+    startedRef.current = turnKey;
+    if (needsClickFirst()) setPhase("waiting");
+    else void beginTurn();
+  }, [turnKey, beginTurn]);
 
   const finishAnswering = useCallback(() => {
     if (phaseRef.current !== "answering") return;
     setPhase("finishing");
     finishHandledRef.current = false;
-    clipRef.current = camera.stopClip();
     voice.stop();
-  }, [camera, voice]);
+  }, [voice]);
 
   const prepLeft = useCountdown(PREP_SECONDS, phase === "prep", question?.id, startAnswering);
-  const answerLeft = useCountdown(ANSWER_SECONDS, phase === "answering", `${question?.id}-${attempt}`, finishAnswering);
+  const answerLeft = useCountdown(
+    followUp ? FOLLOW_UP_SECONDS : ANSWER_SECONDS,
+    phase === "answering",
+    `${turnKey}-${attempt}`,
+    finishAnswering,
+  );
+
+  /** The question is over: finish its video and upload it in the background. */
+  const closeQuestionVideo = useCallback(
+    async (interviewId: number, closed: Question) => {
+      const clip: Clip | null = await camera.stopClip();
+      if (!clip) return;
+      uploadsRef.current.push(
+        api.uploadRecording(interviewId, closed.id, clip.video, clip.durationSeconds).catch(() => {
+          setUploadWarning(`The video for question ${closed.question_order} couldn’t be saved. Your answers were saved.`);
+        }),
+      );
+    },
+    [camera],
+  );
 
   const save = useCallback(
-    async (text: string, clip: Clip | null) => {
+    async (text: string) => {
       if (!interview || !question) return;
-      pendingRef.current = { text, clip };
+      const answering = followUpRef.current;
+      pendingRef.current = text;
       setPhase("saving");
       setSaveError(null);
       try {
-        const result = await api.submitAnswer(interview.id, question.id, text);
+        const result = await api.submitAnswer(interview.id, question.id, text, answering?.id);
         pendingRef.current = null;
-        if (clip) {
-          const order = question.question_order;
-          uploadsRef.current.push(
-            api.uploadRecording(interview.id, question.id, clip.video, clip.durationSeconds).catch(() => {
-              setUploadWarning(`The video for question ${order} couldn’t be saved. Your answer was saved.`);
-            }),
-          );
+        setTyped("");
+        voice.reset();
+        if (result.follow_up) {
+          setFollowUp(result.follow_up); // same question, same video
+          return;
         }
+        await closeQuestionVideo(interview.id, question);
         if (result.status === "completed" || !result.next_question) {
           // Score the interview while the last videos upload, so the Feedback page opens with the report ready.
           // If scoring fails here, the Feedback page tries again.
@@ -305,8 +345,7 @@ export default function Interview() {
           answered_count: result.answered_count,
           current_question_position: result.next_question.question_order,
         });
-        setTyped("");
-        voice.reset();
+        setFollowUp(null);
         setQuestion(result.next_question);
         window.scrollTo({ top: 0, behavior: "smooth" });
       } catch (caught) {
@@ -315,10 +354,13 @@ export default function Interview() {
           pendingRef.current = null;
           try {
             const current = await api.currentQuestion(interview.id);
+            if (current.question.id !== question.id) await closeQuestionVideo(interview.id, question);
             startedRef.current = null;
             setTyped("");
             voice.reset();
+            setFollowUp(current.follow_up);
             setQuestion(current.question);
+            setPhase("waiting");
           } catch {
             navigate(`/interviews/${interview.id}/feedback`, { replace: true });
           }
@@ -328,7 +370,7 @@ export default function Interview() {
         }
       }
     },
-    [interview, navigate, question, voice],
+    [closeQuestionVideo, interview, navigate, question, voice],
   );
 
   // Once the last words are in (voice) or straight away (text), save the answer.
@@ -336,15 +378,11 @@ export default function Interview() {
     if (phase !== "finishing" || voice.status !== "idle" || finishHandledRef.current) return;
     finishHandledRef.current = true;
     const text = (mode === "voice" ? voice.transcript : typed).trim();
-    const clipPromise = clipRef.current ?? Promise.resolve(null);
-    clipRef.current = null;
-    void clipPromise.then((clip) => {
-      if (!text) {
-        setPhase("empty"); // nothing heard: offer a retry instead of saving a blank answer
-        return;
-      }
-      void save(text, clip);
-    });
+    if (!text) {
+      setPhase("empty"); // nothing heard: offer a retry instead of saving a blank answer
+      return;
+    }
+    void save(text);
   }, [phase, voice.status, voice.transcript, mode, typed, save]);
 
   const setMode = useCallback(
@@ -381,7 +419,6 @@ export default function Interview() {
   if (!interview || !question) return <FullPageSpinner label="Loading interview" />;
 
   const total = interview.total_questions;
-  const isLast = question.question_order >= total;
   const busy = phase === "finishing" || phase === "saving";
   const answering = phase === "answering";
   const warn = answering && answerLeft <= WARN_SECONDS;
@@ -411,18 +448,32 @@ export default function Interview() {
       <main className="mx-auto grid w-full max-w-[1140px] gap-x-10 gap-y-8 px-4 pb-24 pt-10 [grid-template-areas:'q'_'c'_'a'] sm:px-6 sm:pt-14 lg:grid-cols-[minmax(0,1fr)_340px] lg:[grid-template-areas:'q_c'_'a_c']">
         <div className="[grid-area:q]">
           <Progress position={question.question_order} total={total} />
-          <div key={question.id} className="rise">
-            <h1 className="headline mt-8 text-[30px] sm:text-[40px]" aria-live="polite">
-              {question.question_text}
-            </h1>
+          <div key={turnKey} className="rise">
+            {followUp ? (
+              <>
+                <p className="mt-8 text-[15px] leading-relaxed text-muted">{question.question_text}</p>
+                <p className="mt-6 text-[13px] font-semibold uppercase tracking-wide text-accent">Follow-up</p>
+                <h1 className="headline mt-2 text-[30px] sm:text-[40px]" aria-live="polite">
+                  {followUp.question_text}
+                </h1>
+              </>
+            ) : (
+              <h1 className="headline mt-8 text-[30px] sm:text-[40px]" aria-live="polite">
+                {question.question_text}
+              </h1>
+            )}
             <button
               type="button"
-              onClick={() => (audio.playing ? audio.stop() : void audio.play(question.id, question.question_text))}
+              onClick={() => {
+                const line = currentLine();
+                if (audio.playing) audio.stop();
+                else if (line) void audio.play(line);
+              }}
               disabled={answering || busy}
               className="mt-5 inline-flex h-11 items-center gap-2.5 rounded-full bg-panel-2 px-4 text-[15px] font-semibold transition-colors hover:bg-[#222226] disabled:opacity-50"
             >
               {audio.loading ? <Spinner className="size-4" /> : <Icon.Speaker className="size-4" />}
-              {audio.playing ? "Stop Reading" : "Hear Question Again"}
+              {audio.playing ? "Stop Reading" : followUp ? "Hear Follow-up Again" : "Hear Question Again"}
             </button>
           </div>
         </div>
@@ -431,7 +482,7 @@ export default function Interview() {
           <CameraTile stream={camera.stream} status={camera.status} recording={camera.recording} />
           {camera.stream && (
             <p className="mt-3 text-center text-[13px] text-faint">
-              {camera.recording ? "Recording this answer." : "Recording starts when you start answering."}
+              {camera.recording ? `Recording question ${question.question_order}.` : "Recording starts when you start answering."}
             </p>
           )}
         </aside>
@@ -442,9 +493,13 @@ export default function Interview() {
           <section className="card mt-6 px-6 pb-8 pt-8 sm:px-10" aria-label="Your answer">
             {phase === "waiting" && (
               <div className="flex flex-col items-center gap-5 py-6 text-center">
-                <p className="text-[17px] text-fg/90">Ready when you are. The question will be read aloud, then you get 60 seconds to prepare.</p>
-                <Button size="lg" onClick={() => void beginQuestion(question)}>
-                  Start Question {question.question_order}
+                <p className="text-[17px] text-fg/90">
+                  {followUp
+                    ? "Ready when you are. The follow-up will be read aloud, then you answer right away."
+                    : "Ready when you are. The question will be read aloud, then you get 60 seconds to prepare."}
+                </p>
+                <Button size="lg" onClick={() => void beginTurn()}>
+                  {followUp ? "Hear the Follow-up" : `Start Question ${question.question_order}`}
                 </Button>
               </div>
             )}
@@ -452,10 +507,20 @@ export default function Interview() {
             {phase === "reading" && (
               <div className="flex flex-col items-center gap-5 py-6 text-center">
                 <p className="flex items-center gap-2.5 text-[17px] text-fg/90" role="status">
-                  <Icon.Speaker className="size-5 text-muted" /> Listen to the question…
+                  <Icon.Speaker className="size-5 text-muted" /> {followUp ? "Listen to the follow-up…" : "Listen to the question…"}
                 </p>
-                <button type="button" onClick={() => { audio.stop(); setPhase("prep"); }} className="text-[14px] font-semibold text-accent hover:underline">
-                  Skip to prep time
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (followUp) startAnswering();
+                    else {
+                      audio.stop();
+                      setPhase("prep");
+                    }
+                  }}
+                  className="text-[14px] font-semibold text-accent hover:underline"
+                >
+                  {followUp ? "Skip to answering" : "Skip to prep time"}
                 </button>
               </div>
             )}
@@ -477,7 +542,12 @@ export default function Interview() {
 
             {(answering || busy) && (
               <div className="flex flex-col gap-6">
-                <Clock seconds={answering ? answerLeft : 0} total={ANSWER_SECONDS} label={answering ? "Time left" : "Time’s up"} warn={warn} />
+                <Clock
+                  seconds={answering ? answerLeft : 0}
+                  total={followUp ? FOLLOW_UP_SECONDS : ANSWER_SECONDS}
+                  label={answering ? "Time left" : "Time’s up"}
+                  warn={warn}
+                />
 
                 {mode === "voice" ? (
                   <>
@@ -489,9 +559,7 @@ export default function Interview() {
                         {busy
                           ? phase === "finishing"
                             ? "Catching your last words…"
-                            : isLast
-                              ? "Saving your last answer…"
-                              : "Reading your answer and writing the next question…"
+                            : "Thinking about your answer…"
                           : voice.status === "connecting"
                             ? "Connecting…"
                             : voice.status === "listening"
@@ -539,7 +607,7 @@ export default function Interview() {
                 )}
 
                 <Button size="lg" className="w-full" onClick={finishAnswering} loading={busy} disabled={!answering}>
-                  {busy ? "Saving…" : isLast ? "Done Answering & Finish" : "Done Answering"}
+                  {busy ? "Saving…" : "Done Answering"}
                 </Button>
               </div>
             )}
@@ -549,8 +617,8 @@ export default function Interview() {
                 <p className="text-[17px] font-semibold">We didn’t catch an answer.</p>
                 <p className="max-w-[420px] text-[15px] text-muted">
                   {mode === "voice"
-                    ? "Check that your microphone is on and not muted, then try again. You’ll get a fresh 3 minutes."
-                    : "Type your answer when you try again. You’ll get a fresh 3 minutes."}
+                    ? `Check that your microphone is on and not muted, then try again. You’ll get a fresh ${followUp ? 2 : 3} minutes.`
+                    : `Type your answer when you try again. You’ll get a fresh ${followUp ? 2 : 3} minutes.`}
                 </p>
                 <Button size="lg" onClick={startAnswering}>Try Again</Button>
                 {mode === "voice" && (
@@ -568,7 +636,7 @@ export default function Interview() {
                   size="lg"
                   onClick={() => {
                     const pending = pendingRef.current;
-                    if (pending) void save(pending.text, pending.clip);
+                    if (pending) void save(pending);
                   }}
                 >
                   Try Saving Again
