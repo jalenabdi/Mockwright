@@ -4,7 +4,7 @@
 
 ## Overview
 
-**Mockwright** is a voice-first behavioral interview practice platform. Users choose a target role and experience level, complete a timed five-question interview with an AI interviewer, and receive structured feedback on their answers. Answers can be spoken (with an optional webcam recording) or typed.
+**Mockwright** is a voice-first behavioral interview practice platform. Users choose a target role and experience level, complete a timed five-question interview with an AI interviewer, and receive structured feedback on their answers. The interview is a real back-and-forth: the interviewer can ask follow-up questions when an answer leaves gaps, and can base its questions on the candidate's saved resume. Answers can be spoken (with an optional webcam recording that captures both sides of the conversation) or typed.
 
 The app is built with a **React + Vite frontend on Cloudflare Workers**, a **FastAPI backend on Render**, a **PostgreSQL database on Supabase**, **Deepgram** for live speech, and **Gemini** for adaptive questions and feedback.
 
@@ -23,33 +23,38 @@ The app is built with a **React + Vite frontend on Cloudflare Workers**, a **Fas
   - Junior
   - Senior
 - Optionally provide a job description
+- Optionally upload a resume (PDF, Word or text, up to 5 MB). It's saved to the account, so it only needs uploading once, and can be replaced or removed at any time
+- Choose whether this interview should ask about the resume ("Ask questions based on my resume")
 - Receive five behavioral interview questions
 
 ### Complete an Interview
 
 - View one question at a time
 - Answer through live voice or text
-- Save each answer
+- Get up to two follow-up questions per question when an answer is vague or missing a result
+- Save each answer and follow-up answer
 - Track interview progress
-- Complete the interview after five answers
+- Complete the interview after five questions
 
 ### Live Voice Interview
 
 - Use the browser microphone to answer out loud
-- Hear each interview question read aloud (Deepgram text-to-speech)
+- Hear each question and follow-up read aloud (Deepgram text-to-speech, streamed so playback starts almost immediately)
 - Receive live transcripts of spoken answers (Deepgram streaming speech-to-text)
 - Review the transcript, then save it through the same answer flow used for typed answers
 
 ### Timed, Recorded Answers
 
-- 60 seconds to prepare, then 3 minutes to answer each question, with a warning in the last 30 seconds
-- Optionally record each answer with the webcam and microphone
-- Watch recorded answers again on the Feedback page
+- Answering starts as soon as the question has been read aloud (no separate prep time)
+- 3 minutes to answer each question and 2 minutes for each follow-up, with a warning in the last 30 seconds
+- Optionally record with the webcam and microphone. Each question gets one video covering the whole exchange (the question, the answer and any follow-ups), with the interviewer's voice mixed in
+- Watch the recordings again on the Feedback page, split by question
 - Delete interviews (and their recordings) from History
 
 ### Receive Feedback
 
 - Generate a final score out of 100
+- Grade each question from 0 to 100 with a one-sentence reason (follow-up answers count toward their question)
 - Evaluate answers for:
   - Relevance
   - STAR structure
@@ -71,8 +76,6 @@ The app is built with a **React + Vite frontend on Cloudflare Workers**, a **Fas
 
 These features may be added only after the required MVP is complete:
 
-- Adaptive follow-up questions
-- Resume-based questions
 - Company-specific interviews
 - Progress charts
 - Shareable reports
@@ -89,7 +92,7 @@ These features may be added only after the required MVP is complete:
 - **Build Tool:** Vite
 - **Routing:** React Router
 - **Styling:** Tailwind CSS 4
-- **Browser APIs:** `getUserMedia`, Web Audio (PCM microphone streaming), `MediaRecorder` (webcam answer recording)
+- **Browser APIs:** `getUserMedia`, Web Audio (PCM microphone streaming, and mixing the interviewer's voice into recordings), `MediaSource` (streamed question audio), `MediaRecorder` (webcam recording)
 - **Hosting:** Cloudflare Workers (static assets), built automatically by Cloudflare Workers Builds from `main`
 
 ### Backend
@@ -99,7 +102,8 @@ These features may be added only after the required MVP is complete:
 - **ORM and Migrations:** SQLAlchemy 2 and Alembic
 - **Data Validation:** Pydantic
 - **Authentication:** JWT (PyJWT) and Argon2 password hashing (pwdlib)
-- **AI Questions and Feedback:** Gemini API (`google-genai`) with structured output
+- **AI Questions and Feedback:** Gemini API (`google-genai`) with structured output. A request that stalls for 3 seconds is sent again and the first reply is used
+- **Resume Parsing:** `pypdf` for PDFs; Word (`.docx`) and text files are read with the standard library
 - **Live Voice:** Deepgram streaming speech-to-text (`nova-3`) and text-to-speech (`aura-2`), relayed over a FastAPI WebSocket
 - **Answer Recordings:** video files saved on the server's disk (`RECORDINGS_DIR`), with metadata in the database
 - **Hosting:** Render web service (`https://mockwright-api.onrender.com`)
@@ -230,16 +234,16 @@ Mockwright/
 │       ├── config.py
 │       ├── database.py
 │       ├── core/security.py   # JWT and password hashing
-│       ├── models/            # User, Interview, InterviewQuestion, Answer, Feedback, Recording
+│       ├── models/            # User, Interview, InterviewQuestion, Answer, FollowUp, Feedback, Recording, Resume
 │       ├── schemas/
-│       ├── routers/           # auth, interviews, feedback, recordings, voice (WebSocket)
-│       └── services/          # deepgram, gemini, question_generator, recording_store, ...
+│       ├── routers/           # auth, interviews, feedback, recordings, resume, voice (WebSocket and speech)
+│       └── services/          # deepgram, gemini_feedback, interview_service, question_generator, resume_parser, recording_store
 ├── frontend/
 │   └── src/
 │       ├── pages/             # Landing, Auth, NewInterview, Interview, Feedback, History
 │       ├── components/
 │       ├── lib/               # API client and auth
-│       └── voice/             # microphone, webcam, countdown and question audio hooks
+│       └── voice/             # microphone, webcam, countdown, question audio and audio-mixing hooks
 ├── tests/
 ├── wrangler.jsonc             # Cloudflare Workers Builds config for the frontend
 ├── .env.example
@@ -334,7 +338,7 @@ cp .env.example .env   # VITE_API_URL=http://localhost:8000
 npm run dev
 ```
 
-Open http://localhost:5173. The pages are Landing, Sign Up, Log In, New Interview, Interview (voice or text, timed, optional webcam recording), Feedback and History.
+Open http://localhost:5173. The pages are Landing, Sign Up, Log In, New Interview (with resume upload), Interview (voice or text, timed, follow-ups, optional webcam recording), Feedback and History.
 
 Voice needs `DEEPGRAM_API_KEY` in the backend `.env`. Without it, the Interview page shows "Switch to Text" and questions are read aloud by the browser's built-in voice. Webcam recording needs a browser that supports `MediaRecorder`.
 
@@ -344,7 +348,7 @@ Voice needs `DEEPGRAM_API_KEY` in the backend `.env`. Without it, the Interview 
 | --- | --- | --- |
 | Frontend | Cloudflare Workers (`mockwright.jalenajj19.workers.dev`) | Cloudflare Workers Builds runs automatically on every push to `main`, using `wrangler.jsonc` |
 | Backend | Render (`mockwright-api.onrender.com`) | Render redeploys the FastAPI service on every push to `main` |
-| Database | Supabase PostgreSQL | Run `alembic upgrade head` against the Supabase `DATABASE_URL` when a PR adds a migration |
+| Database | Supabase PostgreSQL | Run `alembic upgrade head` against the Supabase `DATABASE_URL` when a PR adds a migration (follow-ups and resumes each added one) |
 
 - **Frontend:** `wrangler.jsonc` runs `npm ci && npm run build` in `frontend/` and serves `frontend/dist` as a single-page app. Set `VITE_API_URL=https://mockwright-api.onrender.com` as a build variable in the Cloudflare dashboard. Pull requests get their own preview build. To deploy by hand: `npx wrangler deploy`.
 - **Backend:** set the variables from `.env.example` in Render's environment settings. `DATABASE_URL` is the Supabase connection string (a plain `postgresql://` URL works; the app switches it to the psycopg driver). Start command: `uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT`. Render supports WebSockets, so the voice socket works over `wss://`.
@@ -360,9 +364,22 @@ pytest
 
 Tests use an in-memory SQLite database and fake Gemini/Deepgram clients, so they never spend API credits.
 
-### How Questions Adapt
+### How the Interview Adapts
 
-Each interview has five questions, written one at a time. Gemini writes question 1 from the target role, experience level and job description. After every answer, Gemini reads the whole conversation so far and writes the next question: it presses on gaps (a missing result, a vague "we") or moves to a competency not yet covered. If Gemini is unavailable, an unused question from the question bank is used so the interview never stalls.
+Each interview has five main questions, written one at a time. Gemini writes question 1 from the target role, experience level, job description and (if chosen) the resume.
+
+After every answer, one Gemini call reads the whole conversation so far and decides what comes next:
+
+- **Follow up:** if the answer has a gap (a missing result, a vague "we", no detail on the candidate's own part), it asks a short follow-up on the same question. Each question gets at most two.
+- **Move on:** otherwise it writes the next main question, covering a competency not yet discussed.
+
+After the fifth question and its follow-ups, the interview is complete. If Gemini is unavailable, the interview moves on with an unused question from the question bank, so it never stalls.
+
+### Resumes
+
+- `GET /resume`, `PUT /resume?file_name=...` (the file as the raw request body) and `DELETE /resume` manage the signed-in user's one saved resume.
+- Supported files are PDF, Word (`.docx`), `.txt` and `.md`, up to 5 MB. Only the text is kept (up to 20,000 characters, from the first 10 PDF pages). Scanned PDFs with no text layer are rejected with a clear error.
+- Starting an interview with `"use_resume": true` copies the resume text into that interview, so its questions stay consistent even if the resume is replaced later.
 
 ---
 
