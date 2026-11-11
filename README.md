@@ -159,6 +159,8 @@ Each contributor receives one main task per week. Tasks are listed in the recomm
 
 **Week 7 goal:** Interview history works securely, the main HTTP and WebSocket flows are tested, and automated tests do not call paid external APIs.
 
+`GET /interviews` returns only the signed-in user's interviews, newest first, with status, answered count, total questions and score. `GET /interviews/{interview_id}` adds the current question, each question asked so far with its saved answer (or `null` if unanswered), and the feedback report once it exists. Both endpoints require authentication; another user's interview is returned as not found.
+
 ### Week 8 — Containerization, Deployment, and Demo
 
 - **Ahmed:** Review input validation and error responses across the API, remove unclear server errors, and update `.env.example` without including real secrets.
@@ -276,7 +278,7 @@ alembic upgrade head
 ### 6. Start the Backend
 
 ```bash
-uvicorn backend.app.main:app --reload
+uvicorn backend.app.main:app --reload --env-file .env
 ```
 
 ### 7. Open the API Documentation
