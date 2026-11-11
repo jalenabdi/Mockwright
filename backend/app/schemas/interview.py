@@ -46,6 +46,7 @@ class QuestionOut(BaseModel):
 
 class QuestionWithAnswer(QuestionOut):
     answer_text: str | None = None
+    has_recording: bool = False
 
 
 class InterviewSummary(BaseModel):
