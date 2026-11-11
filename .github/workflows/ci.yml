@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    env:
+      # Tests use in-memory SQLite and fake Gemini/Deepgram, so no real keys.
+      SECRET_KEY: ci-only-secret-key-not-used-anywhere-else-0123456789
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: pip install -r requirements.txt
+      - name: Tests
+        run: python -m pytest -q
+      - name: Type check
+        run: npx -y pyright@1.1.414 backend
+      - name: Migrations apply cleanly and match the models
+        env:
+          DATABASE_URL: sqlite:///${{ runner.temp }}/ci.db
+        run: |
+          alembic upgrade head
+          alembic check
+
+  frontend:
+    name: Frontend build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Type check and build
+        run: npm run build
