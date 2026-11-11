@@ -69,12 +69,23 @@ export interface InterviewSummary {
 
 export interface InterviewDetail extends InterviewSummary {
   job_description: string | null;
+  /** The questions were based on the resume saved to the account. */
+  used_resume: boolean;
   current_question_position: number;
   current_question: Question | null;
   /** The follow-up waiting for an answer on the current question, if any. */
   current_follow_up: FollowUp | null;
   questions: QuestionWithAnswer[];
   feedback: FeedbackReport | null;
+}
+
+/** The resume saved to the account. Only its text is kept. */
+export interface SavedResume {
+  file_name: string;
+  updated_at: string;
+  word_count: number;
+  /** The start of the text read from the file, to check it parsed correctly. */
+  preview: string;
 }
 
 export interface SubmitAnswerResponse {
@@ -208,7 +219,30 @@ export const api = {
     target_role: string;
     experience_level: ExperienceLevel;
     job_description?: string;
+    use_resume?: boolean;
   }) => requestJson<InterviewDetail>("/interviews/start", { json: payload }),
+
+  /** The saved resume, or null if there isn't one. */
+  resume: async (): Promise<SavedResume | null> => {
+    try {
+      return await requestJson<SavedResume>("/resume");
+    } catch (caught) {
+      if (caught instanceof ApiError && caught.status === 404) return null;
+      throw caught;
+    }
+  },
+
+  /** Save a resume to the account, replacing any earlier one. */
+  uploadResume: (file: File) =>
+    requestJson<SavedResume>(`/resume?file_name=${encodeURIComponent(file.name)}`, {
+      method: "PUT",
+      body: file,
+      contentType: file.type || "application/octet-stream",
+    }),
+
+  deleteResume: async (): Promise<void> => {
+    await request("/resume", { method: "DELETE" });
+  },
 
   listInterviews: () => requestJson<InterviewSummary[]>("/interviews"),
 

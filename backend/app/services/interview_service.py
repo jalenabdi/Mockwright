@@ -55,6 +55,7 @@ def context_for(interview: Interview) -> InterviewContext:
         target_role=interview.target_role,
         experience_level=interview.experience_level,
         job_description=interview.job_description,
+        resume=interview.resume_text,
     )
 
 
@@ -106,6 +107,7 @@ def start_interview(
         target_role=context.target_role,
         experience_level=context.experience_level,
         job_description=context.job_description,
+        resume_text=context.resume,
         status=STATUS_IN_PROGRESS,
         current_question_position=1,
     )
