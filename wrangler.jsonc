@@ -4,6 +4,7 @@
 {
   "name": "mockwright",
   "compatibility_date": "2026-11-01",
+  "previews": {},
   "build": {
     "command": "npm ci && npm run build",
     "cwd": "frontend"
