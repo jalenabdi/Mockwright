@@ -307,7 +307,7 @@ Voice needs `DEEPGRAM_API_KEY` in the backend `.env`. Without it, the Interview 
 Everything runs on localhost; Cloudflare exposes it.
 
 - **Backend:** run `uvicorn backend.app.main:app --host 127.0.0.1 --port 8000` and publish it with a Cloudflare Tunnel (`cloudflared tunnel --url http://localhost:8000`, or a named tunnel on your domain). Tunnels carry WebSockets, so the voice socket works over `wss://`.
-- **Frontend:** `npm run build` in `frontend/` and deploy `frontend/dist` to Cloudflare Pages (or serve it through the same tunnel). Set `VITE_API_URL` to the backend's public `https://` URL before building. `public/_redirects` makes page refreshes work.
+- **Frontend:** the repo's Cloudflare Workers Builds project (`mockwright`) uses `wrangler.jsonc` at the repo root: it runs `npm ci && npm run build` in `frontend/` and serves `frontend/dist` as a single-page app. Set `VITE_API_URL` to the backend's public `https://` tunnel URL as a build variable in the Cloudflare dashboard. To deploy by hand: `npx wrangler deploy`.
 - Add the frontend's public URL to `CORS_ORIGINS` in the backend `.env`.
 
 ### 9. Run the Tests
