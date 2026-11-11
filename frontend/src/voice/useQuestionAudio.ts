@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api, ApiError } from "../lib/api";
+import { routeThroughMixer } from "./audioMix";
 
 /** Something the interviewer says: a question, or a follow-up on it. */
 export interface SpokenLine {
@@ -58,7 +59,9 @@ async function streamInto(source: MediaSource, body: ReadableStream<Uint8Array>,
 export function useQuestionAudio(interviewId: number) {
   const [playing, setPlaying] = useState(false);
   const [loading, setLoading] = useState(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null); // the element playing now
+  const routedRef = useRef<HTMLAudioElement | null>(null); // plays through the mixer, so videos record it
+  const plainRef = useRef<HTMLAudioElement | null>(null); // fallback while the mixer can't run
   const cacheRef = useRef(new Map<string, string>());
   const streamUrlRef = useRef<string | null>(null);
   const serverVoiceRef = useRef(true);
@@ -103,11 +106,19 @@ export function useQuestionAudio(interviewId: number) {
     [finish],
   );
 
-  /** Play `src` on the shared audio element; resolves when it ends or stops. */
+  /** Play `src`, through the mixer when it's running; resolves when it ends or stops. */
   const playSource = useCallback(
     (src: string) => {
-      const audio = audioRef.current ?? new Audio();
-      audioRef.current = audio;
+      const routed = routedRef.current ?? new Audio();
+      let audio: HTMLAudioElement;
+      if (routeThroughMixer(routed)) {
+        routedRef.current = routed;
+        audio = routed;
+      } else {
+        plainRef.current ??= new Audio();
+        audio = plainRef.current;
+      }
+      audioRef.current = audio; // play() already stopped whatever was playing before
       audio.src = src;
       return new Promise<void>((resolve) => {
         finishRef.current = resolve;
