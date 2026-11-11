@@ -48,6 +48,7 @@ class Settings:
     deepgram_api_key: str
     deepgram_stt_model: str
     deepgram_tts_model: str
+    recordings_dir: Path
     cors_origins: list[str] = field(default_factory=list)
 
 
@@ -71,5 +72,13 @@ def get_settings() -> Settings:
         deepgram_api_key=os.environ.get("DEEPGRAM_API_KEY", "").strip(),
         deepgram_stt_model=os.environ.get("DEEPGRAM_STT_MODEL", "nova-3").strip(),
         deepgram_tts_model=os.environ.get("DEEPGRAM_TTS_MODEL", "aura-2-thalia-en").strip(),
+        recordings_dir=_recordings_dir(),
         cors_origins=[o.strip() for o in origins.split(",") if o.strip()],
     )
+
+
+def _recordings_dir() -> Path:
+    """Where answer videos are saved. Relative paths are taken from the repo root."""
+    raw = os.environ.get("RECORDINGS_DIR", "").strip()
+    path = Path(raw) if raw else REPO_ROOT / "recordings"
+    return path if path.is_absolute() else REPO_ROOT / path

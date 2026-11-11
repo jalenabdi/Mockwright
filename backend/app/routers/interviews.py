@@ -1,7 +1,7 @@
 """Interview endpoints: start, history, detail, current question and answers."""
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -27,6 +27,7 @@ from ..services.exceptions import (
     QuestionNotInInterviewError,
     QuestionOutOfOrderError,
 )
+from ..services.recording_store import RecordingStore, get_recording_store
 from ..services.question_generator import (
     TOTAL_QUESTIONS,
     InterviewContext,
@@ -37,6 +38,7 @@ from ..services.question_generator import (
 router = APIRouter(prefix="/interviews", tags=["Interviews"])
 
 Generator = Annotated[QuestionGenerator, Depends(get_question_generator)]
+Store = Annotated[RecordingStore, Depends(get_recording_store)]
 
 # Each service error maps to one HTTP status and one user-facing message.
 _ERRORS: dict[type[InterviewServiceError], tuple[int, str]] = {
@@ -58,6 +60,7 @@ def _load_detail(db: Session, interview_id: int) -> InterviewDetail:
         .where(Interview.id == interview_id)
         .options(
             selectinload(Interview.questions).selectinload(InterviewQuestion.answer),
+            selectinload(Interview.questions).selectinload(InterviewQuestion.recording),
             selectinload(Interview.feedback),
         )
         .execution_options(populate_existing=True)
@@ -69,6 +72,7 @@ def _load_detail(db: Session, interview_id: int) -> InterviewDetail:
             question_order=q.question_order,
             question_text=q.question_text,
             answer_text=q.answer.answer_text if q.answer else None,
+            has_recording=q.recording is not None,
         )
         for q in interview.questions
     ]
@@ -152,6 +156,16 @@ def list_interviews(current_user: CurrentUser, db: DbSession) -> list[InterviewS
 def get_interview(interview: OwnedInterview, db: DbSession) -> InterviewDetail:
     """Status, progress, and every question asked so far with its answer."""
     return _load_detail(db, interview.id)
+
+
+@router.delete("/{interview_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_interview(interview: OwnedInterview, db: DbSession, store: Store) -> Response:
+    """Delete the interview with its questions, answers, feedback and videos."""
+    user_id, interview_id = interview.user_id, interview.id
+    db.delete(interview)
+    db.commit()
+    store.delete_interview(user_id, interview_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/{interview_id}/current-question", response_model=CurrentQuestionResponse)

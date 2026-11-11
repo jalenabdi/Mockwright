@@ -10,6 +10,7 @@ from .base import Base
 if TYPE_CHECKING:
     from .answer import Answer
     from .interview import Interview
+    from .recording import Recording
 
 
 class InterviewQuestion(Base):
@@ -35,5 +36,8 @@ class InterviewQuestion(Base):
 
     interview: Mapped[Interview] = relationship(back_populates="questions")
     answer: Mapped[Answer | None] = relationship(
+        back_populates="question", cascade="all, delete-orphan", passive_deletes=True
+    )
+    recording: Mapped[Recording | None] = relationship(
         back_populates="question", cascade="all, delete-orphan", passive_deletes=True
     )
