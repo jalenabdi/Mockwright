@@ -21,7 +21,59 @@ function ListCard({ title, items }: { title: string; items: string[] }) {
   );
 }
 
-function AnswerRow({ order, question, answer }: { order: number; question: string; answer: string | null }) {
+/** Loads an answer's video only when its row is opened. */
+function AnswerVideo({ interviewId, questionId }: { interviewId: number; questionId: number }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let objectUrl: string | null = null;
+    let cancelled = false;
+    api
+      .recording(interviewId, questionId)
+      .then((video) => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(video);
+        setUrl(objectUrl);
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [interviewId, questionId]);
+
+  if (failed) return <p className="mb-5 text-[14px] text-muted">Couldn’t load the video for this answer.</p>;
+  return (
+    <div className="mb-5 aspect-[4/3] w-full max-w-[480px] overflow-hidden rounded-2xl border border-line bg-panel">
+      {url ? (
+        <video src={url} controls playsInline preload="metadata" className="size-full object-cover" aria-label="Your recorded answer" />
+      ) : (
+        <div className="flex size-full items-center justify-center">
+          <Spinner className="size-5" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AnswerRow({
+  interviewId,
+  questionId,
+  order,
+  question,
+  answer,
+  hasRecording,
+}: {
+  interviewId: number;
+  questionId: number;
+  order: number;
+  question: string;
+  answer: string | null;
+  hasRecording: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const id = `answer-${order}`;
   return (
@@ -35,6 +87,9 @@ function AnswerRow({ order, question, answer }: { order: number; question: strin
       >
         <span className="w-4 shrink-0 text-[15px] tabular-nums text-muted">{order}</span>
         <span className="flex-1 text-[16px] font-semibold leading-snug">{question}</span>
+        {hasRecording && (
+          <span className="hidden shrink-0 rounded-full bg-panel-2 px-2.5 py-1 text-[12px] font-semibold text-muted sm:inline">Video</span>
+        )}
         <Icon.Chevron
           className={`size-4 shrink-0 text-muted transition-transform duration-200 ${open ? "rotate-90" : ""}`}
           aria-hidden="true"
@@ -42,6 +97,7 @@ function AnswerRow({ order, question, answer }: { order: number; question: strin
       </button>
       {open && (
         <div id={id} className="rise pb-6 pl-8 pr-8">
+          {hasRecording && <AnswerVideo interviewId={interviewId} questionId={questionId} />}
           <p className="mb-1.5 text-[12px] font-semibold uppercase tracking-wide text-faint">Your answer</p>
           <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-fg/85">{answer ?? "No answer saved."}</p>
         </div>
@@ -169,7 +225,15 @@ export default function Feedback() {
           <h2 id="answers-heading" className="headline mb-4 text-[28px] sm:text-[32px]">Your answers.</h2>
           <ol className="border-b border-line">
             {interview.questions.map((q) => (
-              <AnswerRow key={q.id} order={q.question_order} question={q.question_text} answer={q.answer_text} />
+              <AnswerRow
+                key={q.id}
+                interviewId={interview.id}
+                questionId={q.id}
+                order={q.question_order}
+                question={q.question_text}
+                answer={q.answer_text}
+                hasRecording={q.has_recording}
+              />
             ))}
           </ol>
         </section>

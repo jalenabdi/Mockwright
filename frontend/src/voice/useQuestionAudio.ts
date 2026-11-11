@@ -5,6 +5,9 @@ import { api, ApiError } from "../lib/api";
 /**
  * Reads interview questions aloud with the backend's Deepgram voice.
  * Falls back to the browser's built-in speech if the server has no Deepgram key.
+ *
+ * `play` resolves once reading is over: finished, stopped, replaced by another
+ * play, or impossible (autoplay blocked, no speech support). It never rejects.
  */
 export function useQuestionAudio(interviewId: number) {
   const [playing, setPlaying] = useState(false);
@@ -13,33 +16,47 @@ export function useQuestionAudio(interviewId: number) {
   const cacheRef = useRef(new Map<number, string>());
   const serverVoiceRef = useRef(true);
   const requestRef = useRef(0);
+  const finishRef = useRef<(() => void) | null>(null);
+
+  // Settle the promise of whatever is currently playing.
+  const finish = useCallback(() => {
+    const done = finishRef.current;
+    finishRef.current = null;
+    setPlaying(false);
+    done?.();
+  }, []);
 
   const stop = useCallback(() => {
     requestRef.current += 1;
     audioRef.current?.pause();
     if ("speechSynthesis" in window) window.speechSynthesis.cancel();
-    setPlaying(false);
     setLoading(false);
-  }, []);
+    finish();
+  }, [finish]);
 
-  const speakInBrowser = useCallback((text: string) => {
-    if (!("speechSynthesis" in window)) return;
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 1;
-    utterance.onend = () => setPlaying(false);
-    utterance.onerror = () => setPlaying(false);
-    setPlaying(true);
-    window.speechSynthesis.speak(utterance);
-  }, []);
+  const speakInBrowser = useCallback(
+    (text: string) =>
+      new Promise<void>((resolve) => {
+        if (!("speechSynthesis" in window)) {
+          resolve();
+          return;
+        }
+        finishRef.current = resolve;
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.onend = finish;
+        utterance.onerror = finish;
+        setPlaying(true);
+        window.speechSynthesis.speak(utterance);
+      }),
+    [finish],
+  );
 
   const play = useCallback(
-    async (questionId: number, text: string) => {
+    async (questionId: number, text: string): Promise<void> => {
       stop();
       const request = requestRef.current;
-      if (!serverVoiceRef.current) {
-        speakInBrowser(text);
-        return;
-      }
+      if (!serverVoiceRef.current) return speakInBrowser(text);
+
       let url = cacheRef.current.get(questionId);
       if (!url) {
         setLoading(true);
@@ -50,26 +67,26 @@ export function useQuestionAudio(interviewId: number) {
           if (request !== requestRef.current) return;
           setLoading(false);
           if (caught instanceof ApiError && caught.status === 503) serverVoiceRef.current = false;
-          speakInBrowser(text);
-          return;
+          return speakInBrowser(text);
         }
       }
       if (request !== requestRef.current) return;
       setLoading(false);
+
       const audio = audioRef.current ?? new Audio();
       audioRef.current = audio;
       audio.src = url;
-      audio.onended = () => setPlaying(false);
-      audio.onpause = () => setPlaying(false);
-      try {
+      return new Promise<void>((resolve) => {
+        finishRef.current = resolve;
+        audio.onended = finish;
+        audio.onpause = finish;
+        audio.onerror = finish;
         setPlaying(true);
-        await audio.play();
-      } catch {
-        // Autoplay blocked until the user interacts: they can press "Hear Question Again".
-        setPlaying(false);
-      }
+        // Autoplay can be blocked until the user interacts with the page.
+        audio.play().catch(finish);
+      });
     },
-    [interviewId, speakInBrowser, stop],
+    [finish, interviewId, speakInBrowser, stop],
   );
 
   useEffect(() => {
@@ -77,6 +94,7 @@ export function useQuestionAudio(interviewId: number) {
     return () => {
       audioRef.current?.pause();
       if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+      finishRef.current?.();
       cache.forEach((url) => URL.revokeObjectURL(url));
       cache.clear();
     };
