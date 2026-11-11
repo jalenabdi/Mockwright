@@ -159,6 +159,8 @@ Each contributor receives one main task per week. Tasks are listed in the recomm
 
 **Week 7 goal:** Interview history works securely, the main HTTP and WebSocket flows are tested, and automated tests do not call paid external APIs.
 
+`GET /interviews` returns only the signed-in user's interviews, newest first, with answered count, total questions, current question number, and completion percentage. `GET /interviews/{interview_id}` returns the same progress summary plus each ordered question and its saved answer (or `null` if unanswered). Both endpoints require authentication; another user's interview is returned as not found.
+
 ### Week 8 — Containerization, Deployment, and Demo
 
 - **Ahmed:** Review input validation and error responses across the API, remove unclear server errors, and update `.env.example` without including real secrets.
@@ -263,7 +265,7 @@ Never commit the `.env` file or any API keys to GitHub.
 ### 5. Start the Backend
 
 ```bash
-uvicorn backend.app.main:app --reload
+uvicorn backend.app.main:app --reload --env-file .env
 ```
 
 ### 6. Open the API Documentation

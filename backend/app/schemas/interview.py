@@ -1,3 +1,4 @@
+from datetime import datetime
 from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -38,6 +39,38 @@ class StartInterviewRequest(BaseModel):
     )
     job_description: str | None = Field(
         default=None,
+        min_length=1,
         max_length=5000,
         description="Optional job description to tailor the interview.",
     )
+
+
+class InterviewListItem(BaseModel):
+    """Interview summary returned in the signed-in user's history."""
+
+    id: int
+    target_role: str
+    experience_level: str
+    status: str
+    created_at: datetime
+    answered_count: int
+    total_questions: int
+    current_question_number: int | None
+    progress_percent: int = Field(ge=0, le=100)
+
+
+class InterviewQuestionDetail(BaseModel):
+    """A saved interview question and its optional submitted answer."""
+
+    id: int
+    question_order: int
+    question_text: str
+    answer_text: str | None
+
+
+class InterviewDetail(InterviewListItem):
+    """Full saved interview, including its ordered questions and answers."""
+
+    job_description: str | None
+    updated_at: datetime | None
+    questions: list[InterviewQuestionDetail]

@@ -1,5 +1,9 @@
-from fastapi import Depends, FastAPI, HTTPException
-from sqlalchemy.exc import SQLAlchemyError
+import logging
+
+from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi.responses import JSONResponse
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from pwdlib import PasswordHash
 
@@ -8,11 +12,14 @@ from .database import get_db
 from .dependencies import get_current_user
 from .models import Interview, InterviewQuestion
 from .models.user import User
+from .schemas.auth import RegisterRequest
 from .routers.auth import router as auth_router
 from .routers.feedback import router as feedback_router
 from .routers.interviews import router as interviews_router
 from .schemas.interview import StartInterviewRequest
 from .routers.voice import router as voice_router
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 app.include_router(auth_router)
@@ -21,12 +28,26 @@ app.include_router(feedback_router)
 app.include_router(voice_router)
 
 
+@app.exception_handler(Exception)
+async def handle_unexpected_error(request: Request, error: Exception) -> JSONResponse:
+    logger.error(
+        "Unhandled API error for %s %s",
+        request.method,
+        request.url.path,
+        exc_info=(type(error), error, error.__traceback__),
+    )
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "An unexpected server error occurred. Please try again."},
+    )
+
+
 @app.get("/health")
 def health_status():
     return {"status": "ok"}
 
 
-@app.post("/interviews/start", status_code=201)
+@app.post("/interviews/start", status_code=status.HTTP_201_CREATED)
 def start_interview(
     settings: StartInterviewRequest,
     db: Session = Depends(get_db),
@@ -72,25 +93,46 @@ def start_interview(
         db.commit()
     except SQLAlchemyError:
         db.rollback()
-        raise HTTPException(status_code=500, detail="Could not start the interview.")
+        logger.exception("Could not save a new interview for user %s", current_user.id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not start the interview. Please try again.",
+        ) from None
 
     return response
 
-@app.post("/auth/register", status_code=201)
-def register_user(email: str, password: str, db: Session = Depends(get_db)):
-    # Validate input, reject duplicate emails, hash passwords with pwdlib and Argon2 before saving
-    if not email or not password:   # Validation for empty email or password
-        raise HTTPException(status_code=400, detail="Email and password are required.")
+@app.post("/auth/register", status_code=status.HTTP_201_CREATED)
+def register_user(payload: RegisterRequest, db: Session = Depends(get_db)):
+    """Create an account from validated JSON credentials."""
+    existing_user = db.scalar(select(User).where(User.email == payload.email))
+    if existing_user is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account with this email already exists.",
+        )
 
-    #####    ENSURE EMAIL AND PASSWORD FIT THE USER SCHEMA REQUIREMENTS                #####
-    #####   IMPORT USER MODEL WHENEVER IT IS FINISHED   #####
-    if db.query(User).filter(User.email == email).first():  # Check for duplicate email
-        raise HTTPException(status_code=400, detail="Email already registered.")
+    password_hash = PasswordHash.recommended()
+    db.add(
+        User(
+            email=payload.email,
+            hashed_password=password_hash.hash(payload.password),
+        )
+    )
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account with this email already exists.",
+        ) from None
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("Could not create an account")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not create the account. Please try again.",
+        ) from None
 
-    # Hash the password using pwd/Argon2
-    password_hash = PasswordHash()
-    hashed_password = password_hash.hash(password)
-    db.add(User(email=email, hashed_password=hashed_password))
-    db.commit()
     return {"message": "User registered successfully."}
     
