@@ -1,32 +1,35 @@
-# database.py
-import os
-from sqlalchemy import create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker
+"""SQLAlchemy engine, session factory and the get_db dependency."""
+from collections.abc import Iterator
 
-# Retrieve database URL from environment variables with a sensible fallback for local development
-DATABASE_URL = os.getenv(
-    "DATABASE_URL", 
-    "postgresql://postgres:postgres@localhost:5432/mockwright"
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import Session, sessionmaker
+
+from .config import get_settings
+
+_database_url = get_settings().database_url
+
+engine = create_engine(
+    _database_url,
+    pool_pre_ping=True,
+    connect_args={"check_same_thread": False} if _database_url.startswith("sqlite") else {},
 )
 
-# Initialize SQLAlchemy engine
-engine = create_engine(DATABASE_URL)
+if _database_url.startswith("sqlite"):
 
-# Create configured "SessionLocal" class
-SessionLocal = sessionmaker(
-    autocommit=False, 
-    autoflush=False, 
-    bind=engine
-)
+    @event.listens_for(engine, "connect")
+    def _sqlite_pragmas(dbapi_connection, _record):
+        # SQLite ignores foreign keys (and ON DELETE CASCADE) unless asked.
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.close()
 
-# Base class for declarative models
-Base = declarative_base()
 
-def get_db():
-    """
-    FastAPI dependency that provides a SQLAlchemy database session,
-    ensuring it is properly closed after the request completes.
-    """
+SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+
+
+def get_db() -> Iterator[Session]:
+    """Yield a database session and always close it after the request."""
     db = SessionLocal()
     try:
         yield db

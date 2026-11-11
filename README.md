@@ -159,7 +159,7 @@ Each contributor receives one main task per week. Tasks are listed in the recomm
 
 **Week 7 goal:** Interview history works securely, the main HTTP and WebSocket flows are tested, and automated tests do not call paid external APIs.
 
-`GET /interviews` returns only the signed-in user's interviews, newest first, with answered count, total questions, current question number, and completion percentage. `GET /interviews/{interview_id}` returns the same progress summary plus each ordered question and its saved answer (or `null` if unanswered). Both endpoints require authentication; another user's interview is returned as not found.
+`GET /interviews` returns only the signed-in user's interviews, newest first, with status, answered count, total questions and score. `GET /interviews/{interview_id}` adds the current question, each question asked so far with its saved answer (or `null` if unanswered), and the feedback report once it exists. Both endpoints require authentication; another user's interview is returned as not found.
 
 ### Week 8 — Containerization, Deployment, and Demo
 
@@ -251,30 +251,78 @@ pip install -r requirements.txt
 
 ### 4. Configure Environment Variables
 
-Create a `.env` file from `.env.example` and provide the required values:
+Copy `.env.example` to `.env` and fill in the values:
 
 ```text
-DATABASE_URL=your_postgresql_connection_string
-SECRET_KEY=your_jwt_secret
-DEEPGRAM_API_KEY=your_deepgram_api_key
-GEMINI_API_KEY=your_gemini_api_key
+DATABASE_URL=                # blank = local SQLite file (mockwright.db); or a postgresql+psycopg:// URL
+SECRET_KEY=                  # python -c "import secrets; print(secrets.token_urlsafe(48))"
+ACCESS_TOKEN_EXPIRE_MINUTES=1440
+GEMINI_API_KEY=              # writes the adaptive questions and scores feedback
+GEMINI_MODEL=gemini-2.5-flash
+DEEPGRAM_API_KEY=            # live transcription and spoken questions
+DEEPGRAM_STT_MODEL=nova-3
+DEEPGRAM_TTS_MODEL=aura-2-thalia-en
+CORS_ORIGINS=http://localhost:5173
 ```
 
 Never commit the `.env` file or any API keys to GitHub.
 
-### 5. Start the Backend
+Without `GEMINI_API_KEY` the app still runs: questions come from the built-in question bank, and the feedback endpoint returns `503` until a key is added.
+
+### 5. Create the Database
+
+```bash
+alembic upgrade head
+```
+
+### 6. Start the Backend
 
 ```bash
 uvicorn backend.app.main:app --reload --env-file .env
 ```
 
-### 6. Open the API Documentation
+### 7. Open the API Documentation
 
 Visit:
 
 ```text
 http://127.0.0.1:8000/docs
 ```
+
+### 8. Start the Frontend
+
+In a second terminal:
+
+```bash
+cd frontend
+npm install
+cp .env.example .env   # VITE_API_URL=http://localhost:8000
+npm run dev
+```
+
+Open http://localhost:5173. The pages are Landing, Sign Up, Log In, New Interview, Interview (voice or text), Feedback and History.
+
+Voice needs `DEEPGRAM_API_KEY` in the backend `.env`. Without it, the Interview page shows "Switch to Text" and questions are read aloud by the browser's built-in voice.
+
+### Deploying with Cloudflare
+
+Everything runs on localhost; Cloudflare exposes it.
+
+- **Backend:** run `uvicorn backend.app.main:app --host 127.0.0.1 --port 8000` and publish it with a Cloudflare Tunnel (`cloudflared tunnel --url http://localhost:8000`, or a named tunnel on your domain). Tunnels carry WebSockets, so the voice socket works over `wss://`.
+- **Frontend:** the repo's Cloudflare Workers Builds project (`mockwright`) uses `wrangler.jsonc` at the repo root: it runs `npm ci && npm run build` in `frontend/` and serves `frontend/dist` as a single-page app. Set `VITE_API_URL` to the backend's public `https://` tunnel URL as a build variable in the Cloudflare dashboard. To deploy by hand: `npx wrangler deploy`.
+- Add the frontend's public URL to `CORS_ORIGINS` in the backend `.env`.
+
+### 9. Run the Tests
+
+```bash
+pytest
+```
+
+Tests use an in-memory SQLite database and fake Gemini/Deepgram clients, so they never spend API credits.
+
+### How Questions Adapt
+
+Each interview has five questions, written one at a time. Gemini writes question 1 from the target role, experience level and job description. After every answer, Gemini reads the whole conversation so far and writes the next question: it presses on gaps (a missing result, a vague "we") or moves to a competency not yet covered. If Gemini is unavailable, an unused question from the question bank is used so the interview never stalls.
 
 ---
 

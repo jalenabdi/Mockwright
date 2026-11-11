@@ -1,23 +1,23 @@
-import logging
-from typing import TypedDict
+"""Interview endpoints: start, history, detail, current question and answers."""
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
-from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
-from ..database import get_db
-from ..dependencies import get_current_user, get_owned_interview
-from ..models.answer import Answer
-from ..models.interview import Interview
-from ..models.interview_question import InterviewQuestion
-from ..models.user import User
+from ..dependencies import CurrentUser, DbSession, OwnedInterview
+from ..models import Answer, Feedback, Interview, InterviewQuestion
+from ..schemas.feedback import FeedbackReport
 from ..schemas.interview import (
+    CurrentQuestionResponse,
     InterviewDetail,
-    InterviewListItem,
-    InterviewQuestionDetail,
+    InterviewSummary,
+    QuestionOut,
+    QuestionWithAnswer,
+    StartInterviewRequest,
 )
-from ..schemas.typed_answer import TypedAnswerInput, TypedAnswerReturn
+from ..schemas.typed_answer import SubmitAnswerResponse, TypedAnswerInput, TypedAnswerReturn
+from ..services import interview_service
 from ..services.exceptions import (
     AnswerAlreadyExistsError,
     BlankAnswerError,
@@ -27,223 +27,183 @@ from ..services.exceptions import (
     QuestionNotInInterviewError,
     QuestionOutOfOrderError,
 )
-from ..services.interview_service import save_answer
+from ..services.question_generator import (
+    TOTAL_QUESTIONS,
+    InterviewContext,
+    QuestionGenerator,
+    get_question_generator,
+)
 
 router = APIRouter(prefix="/interviews", tags=["Interviews"])
-logger = logging.getLogger(__name__)
+
+Generator = Annotated[QuestionGenerator, Depends(get_question_generator)]
+
+# Each service error maps to one HTTP status and one user-facing message.
+_ERRORS: dict[type[InterviewServiceError], tuple[int, str]] = {
+    InterviewNotFoundError: (status.HTTP_404_NOT_FOUND, "Interview not found."),
+    InterviewAlreadyCompletedError: (status.HTTP_409_CONFLICT, "This interview has already been completed."),
+    QuestionNotInInterviewError: (status.HTTP_400_BAD_REQUEST, "The question does not belong to this interview."),
+    QuestionOutOfOrderError: (
+        status.HTTP_409_CONFLICT,
+        "This question is not the current question for the interview.",
+    ),
+    AnswerAlreadyExistsError: (status.HTTP_409_CONFLICT, "An answer for this question has already been submitted."),
+    BlankAnswerError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "Answer text cannot be empty."),
+}
 
 
-class InterviewProgress(TypedDict):
-    answered_count: int
-    total_questions: int
-    current_question_number: int | None
-    progress_percent: int
-
-
-def _interview_progress(
-    interview: Interview,
-    answered_count: int | None,
-    total_questions: int | None,
-) -> InterviewProgress:
-    answered_count = answered_count or 0
-    total_questions = total_questions or 0
-    is_complete = (
-        interview.status == "completed"
-        or interview.current_question_position > total_questions
+def _load_detail(db: Session, interview_id: int) -> InterviewDetail:
+    interview = db.scalar(
+        select(Interview)
+        .where(Interview.id == interview_id)
+        .options(
+            selectinload(Interview.questions).selectinload(InterviewQuestion.answer),
+            selectinload(Interview.feedback),
+        )
+        .execution_options(populate_existing=True)
     )
-    return {
-        "answered_count": answered_count,
-        "total_questions": total_questions,
-        "current_question_number": (
-            None
-            if is_complete
-            else interview.current_question_position
-        ),
-        "progress_percent": (
-            round(answered_count * 100 / total_questions) if total_questions else 0
-        ),
-    }
-
-
-@router.get("", response_model=list[InterviewListItem])
-def list_interviews(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """List the signed-in user's interviews, newest first, with progress."""
-    rows = db.execute(
-        select(
-            Interview,
-            func.count(Answer.id),
-            func.count(InterviewQuestion.id),
+    assert interview is not None
+    questions = [
+        QuestionWithAnswer(
+            id=q.id,
+            question_order=q.question_order,
+            question_text=q.question_text,
+            answer_text=q.answer.answer_text if q.answer else None,
         )
-        .outerjoin(
-            InterviewQuestion,
-            InterviewQuestion.interview_id == Interview.id,
-        )
-        .outerjoin(
-            Answer,
-            Answer.interview_question_id == InterviewQuestion.id,
-        )
-        .where(Interview.user_id == current_user.id)
-        .group_by(Interview.id)
-        .order_by(Interview.created_at.desc(), Interview.id.desc())
-    ).all()
-
-    return [
-        InterviewListItem(
-            id=interview.id,
-            target_role=interview.target_role,
-            experience_level=interview.experience_level,
-            status=interview.status,
-            created_at=interview.created_at,
-            **_interview_progress(interview, answered_count, total_questions),
-        )
-        for interview, answered_count, total_questions in rows
+        for q in interview.questions
     ]
-
-
-@router.get("/{interview_id}", response_model=InterviewDetail)
-def get_interview(
-    interview: Interview = Depends(get_owned_interview),
-    db: Session = Depends(get_db),
-):
-    """Return one owned interview with its ordered questions and saved answers."""
-    question_rows = db.execute(
-        select(InterviewQuestion, Answer.answer_text)
-        .outerjoin(
-            Answer,
-            Answer.interview_question_id == InterviewQuestion.id,
-        )
-        .where(InterviewQuestion.interview_id == interview.id)
-        .order_by(InterviewQuestion.question_order)
-    ).all()
-    answered_count = sum(answer_text is not None for _, answer_text in question_rows)
-    total_questions = len(question_rows)
-
+    current = next(
+        (q for q in interview.questions if q.question_order == interview.current_question_position),
+        None,
+    )
+    feedback = (
+        FeedbackReport.model_validate(interview.feedback) if interview.feedback else None
+    )
     return InterviewDetail(
         id=interview.id,
         target_role=interview.target_role,
         experience_level=interview.experience_level,
-        status=interview.status,
-        created_at=interview.created_at,
         job_description=interview.job_description,
-        updated_at=interview.updated_at,
-        questions=[
-            InterviewQuestionDetail(
-                id=question.id,
-                question_order=question.question_order,
-                question_text=question.question_text,
-                answer_text=answer_text,
-            )
-            for question, answer_text in question_rows
-        ],
-        **_interview_progress(interview, answered_count, total_questions),
+        status=interview.status,
+        current_question_position=interview.current_question_position,
+        answered_count=sum(1 for q in questions if q.answer_text is not None),
+        total_questions=TOTAL_QUESTIONS,
+        created_at=interview.created_at,
+        total_score=feedback.total_score if feedback else None,
+        current_question=QuestionOut.model_validate(current) if current else None,
+        questions=questions,
+        feedback=feedback,
     )
 
 
-@router.get("/{interview_id}/current-question")
+@router.post("/start", response_model=InterviewDetail, status_code=status.HTTP_201_CREATED)
+def start_interview(
+    payload: StartInterviewRequest,
+    current_user: CurrentUser,
+    db: DbSession,
+    generator: Generator,
+) -> InterviewDetail:
+    """Start an interview. Question 1 is written for the role, level and job description."""
+    interview = interview_service.start_interview(
+        db,
+        user_id=current_user.id,
+        context=InterviewContext(
+            target_role=payload.target_role,
+            experience_level=payload.experience_level.value,
+            job_description=payload.job_description or None,
+        ),
+        generator=generator,
+    )
+    return _load_detail(db, interview.id)
+
+
+@router.get("", response_model=list[InterviewSummary])
+def list_interviews(current_user: CurrentUser, db: DbSession) -> list[InterviewSummary]:
+    """The signed-in user's interviews, newest first."""
+    answered = (
+        select(InterviewQuestion.interview_id, func.count(Answer.id).label("answered"))
+        .join(Answer, Answer.interview_question_id == InterviewQuestion.id)
+        .group_by(InterviewQuestion.interview_id)
+        .subquery()
+    )
+    rows = db.execute(
+        select(Interview, func.coalesce(answered.c.answered, 0), Feedback.total_score)
+        .outerjoin(answered, answered.c.interview_id == Interview.id)
+        .outerjoin(Feedback, Feedback.interview_id == Interview.id)
+        .where(Interview.user_id == current_user.id)
+        .order_by(Interview.created_at.desc(), Interview.id.desc())
+    ).all()
+    return [
+        InterviewSummary(
+            id=interview.id,
+            target_role=interview.target_role,
+            experience_level=interview.experience_level,
+            status=interview.status,
+            answered_count=count,
+            total_questions=TOTAL_QUESTIONS,
+            created_at=interview.created_at,
+            total_score=score,
+        )
+        for interview, count, score in rows
+    ]
+
+
+@router.get("/{interview_id}", response_model=InterviewDetail)
+def get_interview(interview: OwnedInterview, db: DbSession) -> InterviewDetail:
+    """Status, progress, and every question asked so far with its answer."""
+    return _load_detail(db, interview.id)
+
+
+@router.get("/{interview_id}/current-question", response_model=CurrentQuestionResponse)
 def get_current_question(
-    interview: Interview = Depends(get_owned_interview),
-    db: Session = Depends(get_db),
-):
-    if interview.status == "completed":
+    interview: OwnedInterview, db: DbSession, generator: Generator
+) -> CurrentQuestionResponse:
+    """The question to answer next. Writes it first if it doesn't exist yet."""
+    question = interview_service.ensure_current_question(db, interview, generator)
+    if question is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="This interview has already been completed.",
         )
-
-    current_question = (
-        db.query(InterviewQuestion)
-        .filter(
-            InterviewQuestion.interview_id == interview.id,
-            InterviewQuestion.question_order == interview.current_question_position,
-        )
-        .first()
+    return CurrentQuestionResponse(
+        interview_id=interview.id,
+        current_position=interview.current_question_position,
+        total_questions=TOTAL_QUESTIONS,
+        status=interview.status,
+        question=QuestionOut.model_validate(question),
     )
 
-    if not current_question:
-        logger.error(
-            "Interview %s has no question at position %s",
-            interview.id,
-            interview.current_question_position,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="No current question is available for this interview.",
-        )
 
-    return {
-        "interview_id": interview.id,
-        "current_position": interview.current_question_position,
-        "status": interview.status,
-        "question": {
-            "id": current_question.id,
-            "text": current_question.question_text,
-            "question_order": current_question.question_order,
-        },
-    }
-
-
-@router.post("/{interview_id}/answers", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{interview_id}/answers",
+    response_model=SubmitAnswerResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 def submit_answer(
     payload: TypedAnswerInput,
-    interview: Interview = Depends(get_owned_interview),
-    db: Session = Depends(get_db),
-):
-    """Submit a typed answer for the current question in an interview."""
+    interview: OwnedInterview,
+    db: DbSession,
+    generator: Generator,
+) -> SubmitAnswerResponse:
+    """Save an answer (typed or a voice transcript) and get the next question."""
     try:
-        result = save_answer(
-            db,
-            interview.id,
-            payload.question_id,
-            payload.answer_text,
+        result = interview_service.save_answer(
+            db, interview.id, payload.question_id, payload.answer_text
         )
-    except InterviewAlreadyCompletedError:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="This interview has already been completed.",
-        ) from None
-    except AnswerAlreadyExistsError:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="An answer for this question has already been submitted.",
-        ) from None
-    except QuestionOutOfOrderError:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="This is not the current question for the interview.",
-        ) from None
-    except QuestionNotInInterviewError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The question does not belong to this interview.",
-        ) from None
-    except BlankAnswerError:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Answer text cannot be empty or whitespace.",
-        ) from None
-    except InterviewNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Interview not found.",
-        ) from None
-    except InterviewServiceError:
-        logger.exception("Could not save answer for interview %s", interview.id)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Could not save the answer. Please try again.",
-        ) from None
-    except SQLAlchemyError:
-        logger.exception("Database error saving answer for interview %s", interview.id)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Could not save the answer. Please try again.",
-        ) from None
+    except InterviewServiceError as error:
+        code, detail = _ERRORS.get(type(error), (status.HTTP_400_BAD_REQUEST, "Could not save the answer."))
+        raise HTTPException(status_code=code, detail=detail)
 
-    return TypedAnswerReturn(
-        id=result.answer.id,
-        question_id=result.answer.interview_question_id,
-        answer_text=result.answer.answer_text,
+    db.refresh(interview)
+    next_question = interview_service.ensure_current_question(db, interview, generator)
+    return SubmitAnswerResponse(
+        answer=TypedAnswerReturn(
+            id=result.answer.id,
+            question_id=result.answer.interview_question_id,
+            answer_text=result.answer.answer_text,
+        ),
+        status=result.status,
+        answered_count=result.answered_count,
+        total_questions=result.total_questions,
+        next_question=QuestionOut.model_validate(next_question) if next_question else None,
     )

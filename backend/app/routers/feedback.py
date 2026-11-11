@@ -2,30 +2,34 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from pydantic import ValidationError
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from ..database import get_db
-from ..dependencies import get_owned_interview
-from ..models.answer import Answer
-from ..models.feedback import Feedback
-from ..models.interview import Interview
-from ..models.interview_question import InterviewQuestion
+from ..dependencies import DbSession, OwnedInterview
+from ..models import STATUS_COMPLETED, Feedback
 from ..schemas.feedback import FeedbackReport
-from ..services.gemini_feedback import FeedbackGenerationError, generate_feedback
+from ..services.gemini_feedback import (
+    FeedbackGenerationError,
+    FeedbackGenerator,
+    FeedbackUnavailableError,
+    get_feedback_generator,
+)
+from ..services.interview_service import context_for, conversation_so_far
+from ..services.question_generator import TOTAL_QUESTIONS
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/interviews", tags=["Feedback"])
+
+GENERATION_FAILED_DETAIL = "Could not generate feedback right now. Please try again."
 
 
 def _saved_report(db: Session, interview_id: int) -> FeedbackReport | None:
     saved = db.scalar(select(Feedback).where(Feedback.interview_id == interview_id))
     if saved is None:
         return None
-    return FeedbackReport.model_validate(saved, from_attributes=True)
+    return FeedbackReport.model_validate(saved)
 
 
 @router.post(
@@ -35,51 +39,35 @@ def _saved_report(db: Session, interview_id: int) -> FeedbackReport | None:
 )
 def create_feedback(
     response: Response,
-    interview: Annotated[Interview, Depends(get_owned_interview)],
-    db: Session = Depends(get_db),
-):
+    interview: OwnedInterview,
+    db: DbSession,
+    generator: Annotated[FeedbackGenerator, Depends(get_feedback_generator)],
+) -> FeedbackReport:
     """Create the interview's feedback report, or return the one already saved."""
-    # 1. Already have a report? Return it and do not call Gemini again.
     existing = _saved_report(db, interview.id)
     if existing is not None:
         response.status_code = status.HTTP_200_OK
         return existing
 
-    # 2. Every question must have a saved answer.
-    rows = db.execute(
-        select(InterviewQuestion.question_text, Answer.answer_text)
-        .join(Answer, Answer.interview_question_id == InterviewQuestion.id)
-        .where(InterviewQuestion.interview_id == interview.id)
-        .order_by(InterviewQuestion.question_order)
-    ).all()
-    total_questions = db.scalar(
-        select(func.count(InterviewQuestion.id)).where(
-            InterviewQuestion.interview_id == interview.id
-        )
-    )
-    if not total_questions or len(rows) < total_questions:
+    turns = conversation_so_far(db, interview.id)
+    if interview.status != STATUS_COMPLETED or len(turns) < TOTAL_QUESTIONS:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Feedback is only available after all questions are answered.",
         )
 
-    qa_pairs = [{"question": question, "answer": answer} for question, answer in rows]
-
-    # 3. Ask Gemini. A failure or invalid data gives a controlled 502 and saves nothing.
     try:
-        report = FeedbackReport.model_validate(generate_feedback(qa_pairs))
-    except (FeedbackGenerationError, ValidationError) as error:
-        logger.warning(
-            "Feedback generation failed for interview %s: %s",
-            interview.id,
-            type(error).__name__,
-        )
+        report = generator.generate(context_for(interview), turns)
+    except FeedbackUnavailableError:
+        logger.warning("Feedback requested but GEMINI_API_KEY is not configured.")
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Could not generate feedback right now. Please try again.",
-        ) from None
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Feedback is not available because the AI service is not configured.",
+        )
+    except FeedbackGenerationError as error:
+        logger.warning("Feedback generation failed for interview %s: %s", interview.id, error)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=GENERATION_FAILED_DETAIL)
 
-    # 4. Save the report. There can be only one report per interview.
     try:
         db.add(Feedback(interview_id=interview.id, **report.model_dump(mode="json")))
         db.commit()
@@ -90,33 +78,25 @@ def create_feedback(
         if existing is not None:
             response.status_code = status.HTTP_200_OK
             return existing
-        # Otherwise the generated report broke a database rule (for example a score range).
-        logger.exception(
-            "Database rejected feedback for interview %s",
-            interview.id,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Could not save feedback. Please try again.",
-        ) from None
+        logger.warning("Generated feedback rejected by the database for interview %s", interview.id)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=GENERATION_FAILED_DETAIL)
     except SQLAlchemyError:
         db.rollback()
-        logger.exception("Could not save feedback for interview %s", interview.id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Could not save feedback. Please try again.",
-        ) from None
+            detail="Could not save the feedback.",
+        )
 
     return report
 
+
 @router.get("/{interview_id}/feedback", response_model=FeedbackReport)
-def get_feedback(interview: Interview = Depends(get_owned_interview), db: Session = Depends(get_db)):
-    """Get the feedback report for the user's interview."""
-    feedback_report = _saved_report(db, interview.id)
-    # If no feedback report exists
-    if feedback_report is None:
+def get_feedback(interview: OwnedInterview, db: DbSession) -> FeedbackReport:
+    """Return the saved feedback report for the user's interview."""
+    report = _saved_report(db, interview.id)
+    if report is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Feedback was not found for this interview.",
         )
-    return feedback_report
+    return report

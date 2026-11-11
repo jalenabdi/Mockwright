@@ -1,12 +1,12 @@
-﻿import uuid
+﻿from __future__ import annotations
+
 from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Text, UniqueConstraint, func
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, backref, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base
+from .base import Base, PortableJSON
 
 if TYPE_CHECKING:
     from .interview import Interview
@@ -17,7 +17,6 @@ class Feedback(Base):
 
     __tablename__ = "feedbacks"
     __table_args__ = (
-        # One report per interview.
         UniqueConstraint("interview_id", name="uq_feedbacks_interview_id"),
         CheckConstraint("relevance_score BETWEEN 0 AND 20", name="ck_feedbacks_relevance_score_range"),
         CheckConstraint("star_structure_score BETWEEN 0 AND 20", name="ck_feedbacks_star_structure_score_range"),
@@ -36,9 +35,7 @@ class Feedback(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    interview_id: Mapped[int] = mapped_column(
-        ForeignKey("interviews.id", ondelete="CASCADE"),
-    )
+    interview_id: Mapped[int] = mapped_column(ForeignKey("interviews.id", ondelete="CASCADE"))
 
     relevance_score: Mapped[int]
     star_structure_score: Mapped[int]
@@ -47,17 +44,12 @@ class Feedback(Base):
     communication_score: Mapped[int]
     total_score: Mapped[int]
 
-    strengths: Mapped[list[str]] = mapped_column(JSONB)
-    improvements: Mapped[list[str]] = mapped_column(JSONB)
+    strengths: Mapped[list[str]] = mapped_column(PortableJSON)
+    improvements: Mapped[list[str]] = mapped_column(PortableJSON)
     next_step: Mapped[str] = mapped_column(Text)
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
+        DateTime(timezone=True), server_default=func.now()
     )
 
-    # One-to-one: also adds interview.feedback to the Interview model.
-    interview: Mapped["Interview"] = relationship(
-        backref=backref("feedback", uselist=False, cascade="all, delete-orphan"),
-    )
-
+    interview: Mapped[Interview] = relationship(back_populates="feedback")

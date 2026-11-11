@@ -1,48 +1,58 @@
-"""Authenticate users and issue signed access tokens."""
+"""Registration, login (JWT issuance) and the current-user endpoint."""
 
-import re
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
-from ..core.security import DUMMY_PASSWORD_HASH, create_access_token, verify_password
-from ..database import get_db
-from ..models.user import User
-from ..schemas.auth import Token
+from ..core.security import (
+    DUMMY_PASSWORD_HASH,
+    create_access_token,
+    hash_password,
+    verify_password,
+)
+from ..dependencies import CurrentUser, DbSession
+from ..models import User
+from ..schemas.auth import RegisterRequest, Token, UserOut
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 INCORRECT_CREDENTIALS_DETAIL = "Incorrect email or password"
+DUPLICATE_EMAIL_DETAIL = "An account with this email already exists."
+
+
+@router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
+def register(payload: RegisterRequest, db: DbSession) -> User:
+    """Create an account. Passwords are stored only as Argon2 hashes."""
+    if db.scalar(select(User.id).where(User.email == payload.email)) is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=DUPLICATE_EMAIL_DETAIL)
+
+    user = User(email=payload.email, hashed_password=hash_password(payload.password))
+    db.add(user)
+    try:
+        db.commit()
+    except IntegrityError:
+        # Two sign-ups with the same email at the same moment.
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=DUPLICATE_EMAIL_DETAIL)
+    db.refresh(user)
+    return user
 
 
 @router.post("/token", response_model=Token)
 def login_for_access_token(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
-    db: Session = Depends(get_db),
+    db: DbSession,
 ) -> Token:
-    """Verify the submitted email/password and return a signed JWT.
+    """Verify email/password and return a signed JWT.
 
-    The OAuth2 form's "username" field holds the user's email, normalized
-    the same way as registration (stripped and lowercased). A wrong email
-    and a wrong password return the same 401 and message; an unknown email
-    still runs a password verification against a dummy hash, so response
-    time doesn't reveal whether the email is registered.
+    The OAuth2 form's "username" field holds the email. A wrong email and a
+    wrong password return the same 401, and an unknown email still runs a
+    hash check so response time does not reveal registered emails.
     """
     email = form_data.username.strip().lower()
-    if (
-        len(email) > 254
-        or re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email) is None
-        or not form_data.password
-        or len(form_data.password) > 128
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Provide a valid email address and a password of at most 128 characters.",
-        )
-
     user = db.scalar(select(User).where(User.email == email))
 
     if user is not None:
@@ -58,5 +68,9 @@ def login_for_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    access_token = create_access_token(subject=str(user.id))
-    return Token(access_token=access_token, token_type="bearer")
+    return Token(access_token=create_access_token(subject=str(user.id)), token_type="bearer")
+
+
+@router.get("/me", response_model=UserOut)
+def read_me(current_user: CurrentUser) -> User:
+    return current_user

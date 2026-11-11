@@ -1,168 +1,211 @@
+"""Live voice answers and spoken questions.
+
+WebSocket protocol for /interviews/{id}/voice:
+  client -> {"token": "<jwt>"}               must be the first message, within 10 s
+  server -> {"type": "ready"}                 Deepgram is listening
+  client -> <binary PCM16 mono 16 kHz>        microphone audio, repeatedly
+  server -> {"type": "transcript", "text", "is_final"}
+            {"type": "speech_started"} / {"type": "utterance_end"}
+  client -> {"type": "stop"}                  finish: final words are flushed
+  server -> {"type": "closed"}                then the socket closes (1000)
+
+Errors: {"type": "error", "code", "message"} then close.
+Close codes: 4401 bad auth, 4404 unknown/not-yours interview, 4409 completed.
+
+The transcript is not saved here. The user reviews it and saves it through
+POST /interviews/{id}/answers, the same path typed answers use.
+"""
 import asyncio
+import contextlib
 import json
 import logging
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, WebSocket
+from fastapi import APIRouter, Depends, HTTPException, Response, WebSocket, status
 from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 from starlette.websockets import WebSocketDisconnect, WebSocketState
-from websockets.exceptions import WebSocketException
 
-from ..database import SessionLocal
-from ..dependencies import get_current_user
-from ..models import Interview, InterviewQuestion
-
-from ..services.deepgram import DeepgramError, open_voice_session
-from ..services.voice_events import handle_voice_event
+from ..database import get_db
+from ..dependencies import DbSession, OwnedInterview, find_owned_interview, user_from_token
+from ..models import STATUS_IN_PROGRESS, InterviewQuestion
+from ..services.deepgram import (
+    SpeechService,
+    SpeechServiceError,
+    SpeechUnavailableError,
+    TranscriptionStream,
+    get_speech_service,
+)
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
+router = APIRouter(prefix="/interviews", tags=["Voice"])
+
+Speech = Annotated[SpeechService, Depends(get_speech_service)]
 
 AUTH_TIMEOUT_SECONDS = 10
 MAX_AUDIO_CHUNK_BYTES = 64 * 1024
+FINISH_TIMEOUT_SECONDS = 5.0
+
+CLOSE_UNAUTHORIZED = 4401
+CLOSE_NOT_FOUND = 4404
+CLOSE_COMPLETED = 4409
 
 
 async def _close(websocket: WebSocket, code: int = 1000) -> None:
     if websocket.application_state == WebSocketState.CONNECTED:
-        try:
+        with contextlib.suppress(RuntimeError):
             await websocket.close(code=code)
-        except RuntimeError:
-            pass
 
 
-async def _fail(websocket: WebSocket, detail: str) -> None:
-    if websocket.application_state == WebSocketState.CONNECTED:
-        try:
-            await websocket.send_json({"type": "error", "detail": detail})
-        except RuntimeError:
-            pass
-    await _close(websocket, 1011)
+async def _authorize(websocket: WebSocket, interview_id: int, db: Session) -> int | None:
+    """Return the close code to use, or None if the user may stream audio."""
+    try:
+        raw = await asyncio.wait_for(websocket.receive_text(), AUTH_TIMEOUT_SECONDS)
+        token = json.loads(raw).get("token")
+        if not isinstance(token, str) or not token:
+            raise ValueError("missing token")
+    except (asyncio.TimeoutError, ValueError, AttributeError, KeyError, WebSocketDisconnect):
+        return CLOSE_UNAUTHORIZED
+
+    try:
+        user = user_from_token(token, db)
+        if user is None:
+            return CLOSE_UNAUTHORIZED
+        interview = find_owned_interview(db, interview_id, user.id)
+        if interview is None:
+            return CLOSE_NOT_FOUND
+        if interview.status != STATUS_IN_PROGRESS:
+            return CLOSE_COMPLETED
+        return None
+    finally:
+        db.close()  # don't hold a connection for the whole voice session
 
 
-async def _client_to_deepgram(websocket: WebSocket, dg) -> None:
+async def _client_to_deepgram(websocket: WebSocket, stream: TranscriptionStream) -> None:
     while True:
         message = await websocket.receive()
         if message["type"] == "websocket.disconnect":
+            await stream.finish()
             return
-        if message.get("bytes") is not None:
-            chunk = message["bytes"]
+        chunk = message.get("bytes")
+        if chunk is not None:
             if len(chunk) > MAX_AUDIO_CHUNK_BYTES:
-                await _close(websocket, 1009)
+                await stream.finish()
                 return
-            await dg.send_audio(chunk)
-        elif message.get("text") is not None:
+            await stream.send_audio(chunk)
+            continue
+        text = message.get("text")
+        if text is not None:
             try:
-                data = json.loads(message["text"])
+                data = json.loads(text)
             except ValueError:
-                await websocket.send_json(
-                    {"type": "error", "detail": "Expected a JSON control message."}
-                )
                 continue
             if isinstance(data, dict) and data.get("type") == "stop":
+                await stream.finish()
                 return
-            # Other client JSON is ignored on purpose, never forwarded to Deepgram
 
 
-async def _deepgram_to_client(websocket: WebSocket, dg, interview_id: int, user_id: int) -> None:
-    async for event in dg.receive():
-        if isinstance(event, (bytes, bytearray)):
-            await websocket.send_bytes(bytes(event))
-            continue
+async def _deepgram_to_client(websocket: WebSocket, stream: TranscriptionStream) -> None:
+    async for event in stream.events():
         await websocket.send_json(event)
-        if await handle_voice_event(interview_id, user_id, event):
-            await websocket.send_json({"type": "interview_complete"})
-            return
 
 
-@router.websocket("/interviews/{interview_id}/voice")
-async def interview_voice(websocket: WebSocket, interview_id: int):
+@router.websocket("/{interview_id}/voice")
+async def interview_voice(
+    websocket: WebSocket,
+    interview_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    speech: Speech,
+) -> None:
     await websocket.accept()
 
-    # 1. First message must be {"token": "<jwt>"}
-    try:
-        raw_message = await asyncio.wait_for(websocket.receive_text(), AUTH_TIMEOUT_SECONDS)
-        auth_message = json.loads(raw_message)
-        if not isinstance(auth_message, dict):
-            raise ValueError("authentication message must be a JSON object")
-        token = auth_message.get("token")
-        if not isinstance(token, str) or not token:
-            raise ValueError("missing token")
-    except (TimeoutError, WebSocketDisconnect, ValueError) as exc:
-        logger.warning("Bad voice auth message for interview %s: %s", interview_id, type(exc).__name__)
-        await _close(websocket, 4401)
+    close_code = await _authorize(websocket, interview_id, db)
+    if close_code is not None:
+        await _close(websocket, close_code)
         return
 
-    # 2. Verify token, ownership and status with a short-lived DB session
     try:
-        with SessionLocal() as db:
-            try:
-                user = get_current_user(token=token, db=db)
-            except HTTPException:
-                await _close(websocket, 4401)
-                return
-
-            interview = db.get(Interview, interview_id)
-            if interview is None or interview.user_id != user.id:
-                await _close(websocket, 4404)
-                return
-            if interview.status != "in_progress":
-                await _close(websocket, 4409)
-                return
-
-            questions = list(db.scalars(
-                select(InterviewQuestion.question_text)
-                .where(InterviewQuestion.interview_id == interview_id)
-                .order_by(InterviewQuestion.question_order)
-            ))
-            user_id = user.id
-    except SQLAlchemyError:
-        logger.exception("Could not load interview %s for voice session", interview_id)
-        await _fail(websocket, "Could not load this interview. Please try again.")
-        return
-
-    if len(questions) != 5:
-        logger.error(
-            "Interview %s has %s questions; voice interviews require exactly five",
-            interview_id,
-            len(questions),
-        )
-        await _fail(websocket, "This interview does not have the five required questions.")
-        return
-
-    # 3. Connect to Deepgram and relay both directions
-    try:
-        # Open the Deepgram voice session for the interview
-        async with open_voice_session(questions) as dg:
+        async with speech.transcription() as stream:
             await websocket.send_json({"type": "ready"})
-            # Start the bidirectional relay between the client and Deepgram
-            tasks = {
-                asyncio.create_task(_client_to_deepgram(websocket, dg)),
-                asyncio.create_task(_deepgram_to_client(websocket, dg, interview_id, user_id)),
-            }
-            # Wait for either the client or Deepgram to finish first
-            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-            # Cancel the other task if one finishes first
-            for task in pending:
-                task.cancel()
-            await asyncio.gather(*pending, return_exceptions=True)
-            # Check for exceptions in the completed tasks
-            for task in done:
-                error = task.exception()
-                if error is not None:
-                    raise error
-    except DeepgramError:
-        logger.warning("Deepgram session failed for interview %s", interview_id)
-        await _fail(websocket, "The voice service is unavailable. Please try again.")
+            uplink = asyncio.create_task(_client_to_deepgram(websocket, stream))
+            downlink = asyncio.create_task(_deepgram_to_client(websocket, stream))
+            await _run_relay(uplink, downlink)
+        if websocket.application_state == WebSocketState.CONNECTED:
+            await websocket.send_json({"type": "closed"})
+    except SpeechUnavailableError:
+        await _send_error(websocket, "voice_unavailable", "Voice answers aren't set up on this server. Switch to Text.")
+        await _close(websocket, 1011)
         return
-    except WebSocketDisconnect:
-        pass
-    except (SQLAlchemyError, OSError, RuntimeError, TimeoutError, WebSocketException) as exc:
-        logger.exception(
-            "Voice session failed for interview %s: %s",
-            interview_id,
-            type(exc).__name__,
-        )
-        await _fail(websocket, "The voice session encountered an error. Please reconnect.")
+    except SpeechServiceError as error:
+        logger.warning("Deepgram session failed for interview %s: %s", interview_id, error)
+        await _send_error(websocket, "voice_failed", "The voice connection dropped. Try again or switch to Text.")
+        await _close(websocket, 1011)
+        return
+    except (WebSocketDisconnect, RuntimeError):
+        # The browser went away mid-session; nothing left to tell it.
         return
 
     await _close(websocket, 1000)
+
+
+async def _run_relay(uplink: asyncio.Task[None], downlink: asyncio.Task[None]) -> None:
+    """Relay until the client stops, then let Deepgram flush its last words.
+
+    Deepgram normally closes right after CloseStream. If it doesn't within
+    FINISH_TIMEOUT_SECONDS, the session ends anyway instead of hanging.
+    """
+    tasks = {uplink, downlink}
+    try:
+        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        if uplink in done and not uplink.exception() and not downlink.done():
+            await asyncio.wait({downlink}, timeout=FINISH_TIMEOUT_SECONDS)
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+    for task in (uplink, downlink):
+        if not task.cancelled() and task.exception() is not None:
+            raise task.exception()  # type: ignore[misc]
+
+
+async def _send_error(websocket: WebSocket, code: str, message: str) -> None:
+    if websocket.application_state == WebSocketState.CONNECTED:
+        with contextlib.suppress(RuntimeError, WebSocketDisconnect):
+            await websocket.send_json({"type": "error", "code": code, "message": message})
+
+
+@router.post(
+    "/{interview_id}/questions/{question_id}/speech",
+    response_class=Response,
+    responses={200: {"content": {"audio/mpeg": {}}}},
+)
+async def question_speech(
+    question_id: int,
+    interview: OwnedInterview,
+    db: DbSession,
+    speech: Speech,
+) -> Response:
+    """Read one of the interview's questions aloud (MP3 from Deepgram Aura)."""
+    question_text = db.scalar(
+        select(InterviewQuestion.question_text).where(
+            InterviewQuestion.id == question_id,
+            InterviewQuestion.interview_id == interview.id,
+        )
+    )
+    if question_text is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Question not found.")
+
+    try:
+        audio = await speech.speak(question_text)
+    except SpeechUnavailableError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Spoken questions aren't set up on this server.",
+        )
+    except SpeechServiceError as error:
+        logger.warning("Question speech failed: %s", error)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not read the question aloud right now.",
+        )
+    return Response(content=audio, media_type="audio/mpeg", headers={"Cache-Control": "private, max-age=3600"})
