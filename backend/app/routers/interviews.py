@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from ..dependencies import CurrentUser, DbSession, OwnedInterview
-from ..models import Answer, Feedback, FollowUp, Interview, InterviewQuestion
+from ..models import Answer, Feedback, FollowUp, Interview, InterviewQuestion, Resume
 from ..schemas.feedback import FeedbackReport
 from ..schemas.interview import (
     CurrentQuestionResponse,
@@ -104,6 +104,7 @@ def _load_detail(db: Session, interview_id: int) -> InterviewDetail:
         target_role=interview.target_role,
         experience_level=interview.experience_level,
         job_description=interview.job_description,
+        used_resume=bool(interview.resume_text),
         status=interview.status,
         current_question_position=interview.current_question_position,
         answered_count=sum(1 for q in questions if q.answer_text is not None),
@@ -124,7 +125,15 @@ def start_interview(
     db: DbSession,
     generator: Generator,
 ) -> InterviewDetail:
-    """Start an interview. Question 1 is written for the role, level and job description."""
+    """Start an interview. Question 1 is written for the role, level, job description and resume."""
+    resume_text = None
+    if payload.use_resume:
+        resume_text = db.scalar(select(Resume.text).where(Resume.user_id == current_user.id))
+        if resume_text is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Upload your resume first, or start without it.",
+            )
     interview = interview_service.start_interview(
         db,
         user_id=current_user.id,
@@ -132,6 +141,7 @@ def start_interview(
             target_role=payload.target_role,
             experience_level=payload.experience_level.value,
             job_description=payload.job_description or None,
+            resume=resume_text,
         ),
         generator=generator,
     )

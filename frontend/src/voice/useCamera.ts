@@ -1,6 +1,8 @@
 import fixWebmDuration from "fix-webm-duration";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { recordingStream } from "./audioMix";
+
 export type CameraStatus = "off" | "starting" | "on" | "blocked" | "missing" | "unsupported" | "lost";
 
 export interface Clip {
@@ -18,7 +20,10 @@ function pickFormat(): string | undefined {
 }
 
 /**
- * The candidate's camera: a live preview plus one recording per answer.
+ * The candidate's camera: a live preview plus one recording per question.
+ *
+ * A recording mixes the candidate's mic with the interviewer's voice (see
+ * audioMix), so the video plays back as the conversation it was.
  *
  * The camera is optional. If it's blocked or missing, `status` says so and
  * `startClip` / `stopClip` do nothing, so the interview carries on without video.
@@ -30,6 +35,7 @@ export function useCamera() {
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const releaseMixRef = useRef<(() => void) | null>(null);
   const startedAtRef = useRef(0);
   const mountedRef = useRef(true);
   const startingRef = useRef(false);
@@ -59,6 +65,8 @@ export function useCamera() {
       media.getVideoTracks()[0]?.addEventListener("ended", () => {
         if (streamRef.current !== media) return;
         recorderRef.current = null;
+        releaseMixRef.current?.();
+        releaseMixRef.current = null;
         setRecording(false);
         media.getTracks().forEach((track) => track.stop());
         streamRef.current = null;
@@ -75,12 +83,15 @@ export function useCamera() {
     }
   }, []);
 
+  /** Start a new clip. Does nothing if one is already recording. */
   const startClip = useCallback(() => {
     const media = streamRef.current;
     const format = pickFormat();
     if (!media || !format || recorderRef.current) return;
     chunksRef.current = [];
-    const recorder = new MediaRecorder(media, {
+    const mixed = recordingStream(media);
+    releaseMixRef.current = mixed.release;
+    const recorder = new MediaRecorder(mixed.stream, {
       mimeType: format,
       videoBitsPerSecond: 600_000,
       audioBitsPerSecond: 64_000,
@@ -106,7 +117,10 @@ export function useCamera() {
           return;
         }
         const durationSeconds = (performance.now() - startedAtRef.current) / 1000;
+        const releaseMix = releaseMixRef.current;
+        releaseMixRef.current = null;
         recorder.onstop = async () => {
+          releaseMix?.();
           const type = recorder.mimeType.split(";")[0] || "video/webm";
           let video = new Blob(chunksRef.current, { type });
           chunksRef.current = [];
@@ -139,6 +153,8 @@ export function useCamera() {
       recorder.onstop = null;
       recorder.stop();
     }
+    releaseMixRef.current?.();
+    releaseMixRef.current = null;
     chunksRef.current = [];
   }, []);
 
@@ -151,6 +167,8 @@ export function useCamera() {
         recorder.onstop = null;
         recorder.stop();
       }
+      releaseMixRef.current?.();
+      releaseMixRef.current = null;
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
     };

@@ -70,7 +70,9 @@ class RecordingQuestionGenerator:
     def next_step(self, context, history, *, can_follow_up, is_last):
         from backend.app.services.question_generator import NextStep
 
-        self.step_calls.append({"history": list(history), "can_follow_up": can_follow_up, "is_last": is_last})
+        self.step_calls.append(
+            {"context": context, "history": list(history), "can_follow_up": can_follow_up, "is_last": is_last}
+        )
         if can_follow_up and self.follow_ups:
             return NextStep(follow_up=self.follow_ups.pop(0))
         return NextStep(next_question=None if is_last else self.next_question(context, history))
