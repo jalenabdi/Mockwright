@@ -287,7 +287,30 @@ Visit:
 http://127.0.0.1:8000/docs
 ```
 
-### 8. Run the Tests
+### 8. Start the Frontend
+
+In a second terminal:
+
+```bash
+cd frontend
+npm install
+cp .env.example .env   # VITE_API_URL=http://localhost:8000
+npm run dev
+```
+
+Open http://localhost:5173. The pages are Landing, Sign Up, Log In, New Interview, Interview (voice or text), Feedback and History.
+
+Voice needs `DEEPGRAM_API_KEY` in the backend `.env`. Without it, the Interview page shows "Switch to Text" and questions are read aloud by the browser's built-in voice.
+
+### Deploying with Cloudflare
+
+Everything runs on localhost; Cloudflare exposes it.
+
+- **Backend:** run `uvicorn backend.app.main:app --host 127.0.0.1 --port 8000` and publish it with a Cloudflare Tunnel (`cloudflared tunnel --url http://localhost:8000`, or a named tunnel on your domain). Tunnels carry WebSockets, so the voice socket works over `wss://`.
+- **Frontend:** the repo's Cloudflare Workers Builds project (`mockwright`) uses `wrangler.jsonc` at the repo root: it runs `npm ci && npm run build` in `frontend/` and serves `frontend/dist` as a single-page app. Set `VITE_API_URL` to the backend's public `https://` tunnel URL as a build variable in the Cloudflare dashboard. To deploy by hand: `npx wrangler deploy`.
+- Add the frontend's public URL to `CORS_ORIGINS` in the backend `.env`.
+
+### 9. Run the Tests
 
 ```bash
 pytest
