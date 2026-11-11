@@ -79,8 +79,8 @@ export default function Interview() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const voice = useVoiceAnswer(interviewId);
   const audio = useQuestionAudio(interviewId);
+  const voice = useVoiceAnswer(interviewId, { onSpeechStart: audio.stop });
   const autoplayedRef = useRef<number | null>(null);
 
   usePageTitle(question ? `Question ${question.question_order}` : "Interview");
@@ -207,7 +207,16 @@ export default function Interview() {
           <p className="hidden truncate text-[14px] text-muted sm:block">
             {interview.target_role} · {levelLabel(interview.experience_level)}
           </p>
-          <Link to="/history" className="justify-self-end text-[14px] text-muted transition-colors hover:text-fg">
+          <Link
+            to="/history"
+            onClick={(event) => {
+              const unsaved = (mode === "voice" ? voice.transcript : typed).trim();
+              if (unsaved && !window.confirm("Your saved answers are kept, but this unsaved answer will be lost. Leave anyway?")) {
+                event.preventDefault();
+              }
+            }}
+            className="justify-self-end text-[14px] text-muted transition-colors hover:text-fg"
+          >
             Save &amp; Exit
           </Link>
         </div>
@@ -216,7 +225,16 @@ export default function Interview() {
       <main className="mx-auto w-full max-w-[780px] px-4 pb-24 pt-10 sm:pt-14">
         <Progress position={question.question_order} total={total} />
 
-        <div key={question.id} className="rise">
+        <div
+          key={question.id}
+          className={`rise transition-opacity duration-300 ${saving && !isLast ? "opacity-40" : ""}`}
+          aria-busy={saving}
+        >
+          {saving && !isLast && (
+            <p className="mt-6 flex items-center gap-2 text-[14px] text-muted" role="status">
+              <Spinner className="size-3.5" /> Reading your answer and writing the next question…
+            </p>
+          )}
           <h1 className="headline mt-8 text-[32px] sm:text-[44px]" aria-live="polite">
             {question.question_text}
           </h1>

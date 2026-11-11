@@ -30,7 +30,10 @@ function joinTranscript(current: string, addition: string): string {
  * frames; transcript events come back. The transcript is only saved when the
  * user presses "Save Answer", through the same endpoint as typed answers.
  */
-export function useVoiceAnswer(interviewId: number) {
+export function useVoiceAnswer(interviewId: number, options: { onSpeechStart?: () => void } = {}) {
+  const onSpeechStartRef = useRef(options.onSpeechStart);
+  onSpeechStartRef.current = options.onSpeechStart;
+
   const [status, setStatus] = useState<VoiceStatus>("idle");
   const [transcript, setTranscript] = useState("");
   const [interim, setInterimState] = useState("");
@@ -152,7 +155,11 @@ export function useVoiceAnswer(interviewId: number) {
             fail("voice_failed", "Couldn’t start recording in this browser. Try Chrome or Edge, or switch to Text."),
           );
           break;
+        case "speech_started":
+          onSpeechStartRef.current?.(); // barge-in: the interviewer stops talking
+          break;
         case "transcript":
+          onSpeechStartRef.current?.();
           if (event.is_final) {
             setTranscript((current) => joinTranscript(current, event.text ?? ""));
             setInterim("");

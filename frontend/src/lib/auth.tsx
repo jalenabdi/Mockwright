@@ -30,12 +30,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     api
       .me()
       .then((me) => !cancelled && setUser(me))
-      .catch(() => {
-        if (!cancelled) {
-          setToken(null);
-          setTokenState(null);
-        }
-      })
+      // A 401 clears the token through UNAUTHORIZED_EVENT. Any other failure
+      // (server briefly down) keeps the user signed in.
+      .catch(() => undefined)
       .finally(() => !cancelled && setLoading(false));
     return () => {
       cancelled = true;
