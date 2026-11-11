@@ -44,6 +44,7 @@ Speech = Annotated[SpeechService, Depends(get_speech_service)]
 
 AUTH_TIMEOUT_SECONDS = 10
 MAX_AUDIO_CHUNK_BYTES = 64 * 1024
+FINISH_TIMEOUT_SECONDS = 5.0
 
 CLOSE_UNAUTHORIZED = 4401
 CLOSE_NOT_FOUND = 4404
@@ -128,16 +129,7 @@ async def interview_voice(
             await websocket.send_json({"type": "ready"})
             uplink = asyncio.create_task(_client_to_deepgram(websocket, stream))
             downlink = asyncio.create_task(_deepgram_to_client(websocket, stream))
-            # Deepgram ends the downlink after a stop (or on its own); then we finish.
-            done, _ = await asyncio.wait({uplink, downlink}, return_when=asyncio.FIRST_EXCEPTION)
-            if downlink not in done:
-                await downlink
-            uplink.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await uplink
-            for task in done:
-                if task.exception():
-                    raise task.exception()  # type: ignore[misc]
+            await _run_relay(uplink, downlink)
         if websocket.application_state == WebSocketState.CONNECTED:
             await websocket.send_json({"type": "closed"})
     except SpeechUnavailableError:
@@ -149,10 +141,31 @@ async def interview_voice(
         await _send_error(websocket, "voice_failed", "The voice connection dropped. Try again or switch to Text.")
         await _close(websocket, 1011)
         return
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, RuntimeError):
+        # The browser went away mid-session; nothing left to tell it.
         return
 
     await _close(websocket, 1000)
+
+
+async def _run_relay(uplink: asyncio.Task[None], downlink: asyncio.Task[None]) -> None:
+    """Relay until the client stops, then let Deepgram flush its last words.
+
+    Deepgram normally closes right after CloseStream. If it doesn't within
+    FINISH_TIMEOUT_SECONDS, the session ends anyway instead of hanging.
+    """
+    tasks = {uplink, downlink}
+    try:
+        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        if uplink in done and not uplink.exception() and not downlink.done():
+            await asyncio.wait({downlink}, timeout=FINISH_TIMEOUT_SECONDS)
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+    for task in (uplink, downlink):
+        if not task.cancelled() and task.exception() is not None:
+            raise task.exception()  # type: ignore[misc]
 
 
 async def _send_error(websocket: WebSocket, code: str, message: str) -> None:

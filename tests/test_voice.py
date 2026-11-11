@@ -169,3 +169,24 @@ def test_deepgram_messages_become_simple_events():
     assert to_event({"type": "SpeechStarted"}) == {"type": "speech_started"}
     assert to_event({"type": "UtteranceEnd"}) == {"type": "utterance_end"}
     assert to_event({"type": "Metadata"}) is None
+
+
+class SilentAfterStopStream(FakeTranscriptionStream):
+    """A Deepgram stream that never closes after CloseStream."""
+
+    async def finish(self) -> None:
+        self.finished = True
+
+
+def test_voice_session_ends_even_if_deepgram_never_closes(client, auth_headers, start_interview, speech, monkeypatch):
+    from backend.app.routers import voice
+
+    monkeypatch.setattr(voice, "FINISH_TIMEOUT_SECONDS", 0.2)
+    speech.stream = SilentAfterStopStream()
+    interview = start_interview()
+
+    with client.websocket_connect(f"/interviews/{interview['id']}/voice") as ws:
+        ws.send_json({"token": _token(auth_headers)})
+        assert ws.receive_json() == {"type": "ready"}
+        ws.send_json({"type": "stop"})
+        assert ws.receive_json() == {"type": "closed"}
