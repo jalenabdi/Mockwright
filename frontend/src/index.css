@@ -120,11 +120,22 @@
   animation: pulse-ring 1.4s var(--ease-out-quint) infinite;
 }
 
+@keyframes rec-blink {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.rec-dot {
+  animation: rec-blink 1.2s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .rise,
   .wave-bar,
   .caret,
-  .mic-live {
+  .mic-live,
+  .rec-dot {
     animation: none !important;
   }
 }

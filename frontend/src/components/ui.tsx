@@ -121,6 +121,17 @@ export const Icon = {
       <rect x="13.8" y="6" width="3.2" height="12" rx="1" />
     </svg>
   ),
+  Trash: (p: IconProps) => (
+    <svg viewBox="0 0 24 24" {...iconBase} {...p}>
+      <path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l.8 12.5h9.4L17.5 7M10.5 11v5M13.5 11v5" />
+    </svg>
+  ),
+  CameraOff: (p: IconProps) => (
+    <svg viewBox="0 0 24 24" {...iconBase} {...p}>
+      <path d="M3 3l18 18M10.5 6.5H14l1.5 2H19a1.5 1.5 0 0 1 1.5 1.5v7.5M18 19H5a1.5 1.5 0 0 1-1.5-1.5V10A1.5 1.5 0 0 1 5 8.5h1.5" />
+      <path d="M9.6 11.2a3 3 0 0 0 4.2 4.2" />
+    </svg>
+  ),
   Eye: (p: IconProps) => (
     <svg viewBox="0 0 24 24" {...iconBase} {...p}>
       <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" />

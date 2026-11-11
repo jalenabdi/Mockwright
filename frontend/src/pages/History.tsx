@@ -2,16 +2,53 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router";
 
 import { AppHeader } from "../components/AppHeader";
-import { ErrorNote, Icon, LinkButton, Spinner } from "../components/ui";
+import { Button, ErrorNote, Icon, LinkButton, Spinner } from "../components/ui";
 import { api, type InterviewSummary } from "../lib/api";
 import { formatDate, levelLabel, usePageTitle } from "../lib/format";
 
-function Row({ item }: { item: InterviewSummary }) {
+function Row({ item, onDelete }: { item: InterviewSummary; onDelete: (id: number) => Promise<void> }) {
   const completed = item.status === "completed";
   const href = completed ? `/interviews/${item.id}/feedback` : `/interviews/${item.id}`;
+  const [confirming, setConfirming] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function remove() {
+    setDeleting(true);
+    setError(null);
+    try {
+      await onDelete(item.id);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not delete this interview.");
+      setDeleting(false);
+    }
+  }
+
+  if (confirming) {
+    return (
+      <li className="flex flex-col gap-4 bg-panel-2 px-6 py-5 sm:flex-row sm:items-center sm:px-8" role="alertdialog" aria-label={`Delete ${item.target_role} interview`}>
+        <div className="min-w-0 flex-1">
+          <p className="text-[16px] font-bold tracking-tight">Delete this interview?</p>
+          <p className="mt-0.5 text-[14px] text-muted">
+            {item.target_role} · {formatDate(item.created_at)}. Its answers, feedback and recordings will be permanently removed.
+          </p>
+          {error && <p className="mt-2 text-[14px] text-danger">{error}</p>}
+        </div>
+        <div className="flex shrink-0 gap-2">
+          <Button variant="secondary" size="sm" onClick={() => setConfirming(false)} disabled={deleting} autoFocus>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={remove} loading={deleting} className="bg-danger! text-ink!">
+            Delete
+          </Button>
+        </div>
+      </li>
+    );
+  }
+
   return (
-    <li>
-      <Link to={href} className="group flex items-center gap-4 px-6 py-5 transition-colors hover:bg-panel-2 sm:px-8">
+    <li className="flex items-stretch">
+      <Link to={href} className="group flex min-w-0 flex-1 items-center gap-4 py-5 pl-6 pr-2 transition-colors hover:bg-panel-2 sm:pl-8">
         <div className="min-w-0 flex-1">
           <p className="truncate text-[17px] font-bold tracking-tight">{item.target_role}</p>
           <p className="mt-0.5 text-[14px] text-muted">
@@ -35,6 +72,14 @@ function Row({ item }: { item: InterviewSummary }) {
         )}
         <Icon.Chevron className="size-4 shrink-0 text-muted transition-transform duration-150 group-hover:translate-x-0.5" aria-hidden="true" />
       </Link>
+      <button
+        type="button"
+        onClick={() => setConfirming(true)}
+        aria-label={`Delete ${item.target_role} interview from ${formatDate(item.created_at)}`}
+        className="flex w-14 shrink-0 items-center justify-center text-faint transition-colors hover:bg-panel-2 hover:text-danger sm:w-16"
+      >
+        <Icon.Trash className="size-[18px]" />
+      </button>
     </li>
   );
 }
@@ -50,6 +95,11 @@ export default function History() {
       .then(setItems)
       .catch((caught) => setError(caught instanceof Error ? caught.message : "Could not load your history."));
   }, []);
+
+  async function deleteInterview(id: number) {
+    await api.deleteInterview(id);
+    setItems((current) => current?.filter((i) => i.id !== id) ?? null);
+  }
 
   const completedCount = items?.filter((i) => i.status === "completed").length ?? 0;
 
@@ -87,7 +137,7 @@ export default function History() {
           ) : (
             <ul className="card rise divide-y divide-line overflow-hidden">
               {items.map((item) => (
-                <Row key={item.id} item={item} />
+                <Row key={item.id} item={item} onDelete={deleteInterview} />
               ))}
             </ul>
           )}
